@@ -137,7 +137,8 @@ def _serialize_role(role: Role) -> dict:
     }
 
 
-def _serialize_user(user: User) -> dict:
+async def _serialize_user(user: User) -> dict:
+    permissions = await FeaturePermission.filter(role_id=user.role_id).values("feature", "can_view", "can_create", "can_edit", "can_delete")
 
     return {
         "id":                   str(user.id),
@@ -164,6 +165,7 @@ def _serialize_user(user: User) -> dict:
         "last_login_at":        user.last_login_at,
         "created_at":           user.created_at,
         "is_deleted":           user.is_deleted,
+        "permissions":          permissions,
     }
 
 
@@ -457,7 +459,7 @@ async def list_users(
         "total":   total,
         "page":    page,
         "counts":  counts,
-        "results": [_serialize_user(u) for u in users],
+        "results": [await _serialize_user(u) for u in users],
     }
 
 
@@ -519,7 +521,7 @@ async def create_user(
         f"New member created: {user.full_name}",
     )
     background_tasks.add_task(_notify_new_member, user, password)
-    return _serialize_user(user)
+    return await _serialize_user(user)
 
 
 @router.get("/users/online", tags=["Members"])
@@ -556,7 +558,7 @@ async def list_online_users(
 @router.get("/users/me", tags=["Members"])
 async def get_me(current_user: User = Depends(login_required)):
     await current_user.fetch_related("role")
-    return _serialize_user(current_user)
+    return await _serialize_user(current_user)
 
 
 @router.patch("/users/me", tags=["Members"])
@@ -598,7 +600,7 @@ async def update_me(
 
     await current_user.save()
     await log_activity(current_user, ActivityActionType.PROFILE_UPDATED, "user", current_user.id)
-    return _serialize_user(current_user)
+    return await _serialize_user(current_user)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -641,7 +643,7 @@ async def get_user(
     if not user:
         raise HTTPException(status_code=404, detail="Member not found.")
     await user.fetch_related("role")
-    return _serialize_user(user)
+    return await _serialize_user(user)
 
 
 @router.patch("/users/{user_id}", tags=["Members"])
@@ -698,7 +700,7 @@ async def update_user(
 
     await user.save()
     await user.fetch_related("role")
-    return _serialize_user(user)
+    return await _serialize_user(user)
 
 
 @router.patch("/users/{user_id}/photo_upload", tags=["Members"])
@@ -716,7 +718,7 @@ async def update_user_photo(
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to upload photo.")
     await user.save()
-    return _serialize_user(user)
+    return await _serialize_user(user)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -748,7 +750,7 @@ async def validate_payment(
         current_user, ActivityActionType.USER_VALIDATED, "user", user.id,
         f"Payment {'validated' if user.is_payment_validated else 'revoked'} for {user.full_name}",
     )
-    return _serialize_user(user)
+    return await _serialize_user(user)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -782,7 +784,7 @@ async def restore_user(
     user.is_deleted = False
     user.status     = UserStatus.PENDING
     await user.save(update_fields=["is_deleted", "status"])
-    return _serialize_user(user)
+    return await _serialize_user(user)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

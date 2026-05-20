@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>FastAPI Dashboard</title>
+        <link rel="stylesheet" href="/static/style.css">
+        <style>
+            .login-lock-btn { position: fixed !important; top: 18px; right: 18px; z-index: 9999; }
+            .login-modal[hidden] { display: none !important; }
+        </style>
+    </head>
+    <body>
+    <div class="page">
+        <button id="loginLockBtn" class="login-lock-btn" type="button" aria-label="Open login">
+            <span class="lock-icon">&#128274;</span>
+        </button>
+
+        <div id="loginModal" class="login-modal" aria-hidden="true" hidden>
+            <div class="login-modal-card">
+                <button id="closeLoginModal" class="login-close-btn" type="button" aria-label="Close login">&times;</button>
+                <div class="beat-badge" aria-hidden="true">&#128272;</div>
+                <h3>Login</h3>
+                <form id="popupLoginForm" class="popup-login-form">
+                    <label for="popupUsername">Username or Email</label>
+                    <input id="popupUsername" name="username" type="text" autocomplete="username" required />
+
+                    <label for="popupPassword">Password</label>
+                    <input id="popupPassword" name="password" type="password" autocomplete="current-password" required />
+
+                    <button class="popup-submit-btn" type="submit">Sign In</button>
+                </form>
+                <p id="popupLoginMsg" class="popup-login-msg"></p>
+            </div>
+        </div>
+
+        <div class="">
+            <h1>404</h1>
+            <h2>Page Not Found</h2>
+<!--            <p>I tried to catch some fog, but I mist</p>-->
+        </div>
+        <img src={{image_url}} class="bg-image" />
+        <div id="signature">
+            <p>Developed by : <a href="https://www.moynul.com" target="_blank">Md. Moynul Islam</a></p>
+            <span class="designation">Python Developer</span>
+        </div>
+    </div>
+
+    <script>
+    const bgImage = document.querySelector('.bg-image');
+    let lFollowX = 0, lFollowY = 0, x = 0, y = 0;
+    const friction = 1 / 30;
+    const loginLockBtn = document.getElementById('loginLockBtn');
+    const loginModal = document.getElementById('loginModal');
+    const closeLoginModal = document.getElementById('closeLoginModal');
+    const popupLoginForm = document.getElementById('popupLoginForm');
+    const popupLoginMsg = document.getElementById('popupLoginMsg');
+
+    function openLoginModal() {
+        loginModal.hidden = false;
+        loginModal.classList.add('open');
+        loginModal.setAttribute('aria-hidden', 'false');
+        document.getElementById('popupUsername').focus();
+    }
+
+    function closeModal() {
+        loginModal.classList.remove('open');
+        loginModal.setAttribute('aria-hidden', 'true');
+        setTimeout(() => {
+            loginModal.hidden = true;
+        }, 220);
+    }
+
+    if (loginLockBtn && loginModal && closeLoginModal && popupLoginForm && popupLoginMsg) {
+        loginLockBtn.addEventListener('click', openLoginModal);
+        closeLoginModal.addEventListener('click', closeModal);
+        loginModal.addEventListener('click', e => {
+            if (e.target === loginModal) closeModal();
+        });
+        window.addEventListener('keydown', e => {
+            if (e.key === 'Escape' && loginModal.classList.contains('open')) closeModal();
+        });
+    }
+
+    popupLoginForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        popupLoginMsg.textContent = '';
+        popupLoginMsg.classList.remove('error');
+
+        const username = document.getElementById('popupUsername').value.trim();
+        const password = document.getElementById('popupPassword').value;
+
+        if (!username || !password) {
+            popupLoginMsg.textContent = 'Please fill username and password.';
+            popupLoginMsg.classList.add('error');
+            return;
+        }
+
+        try {
+            const body = new URLSearchParams();
+            body.append('grant_type', 'password');
+            body.append('username', username);
+            body.append('password', password);
+
+            const res = await fetch('/auth/login_auth2/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString(),
+                credentials: 'include'
+            });
+
+            const data = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+                popupLoginMsg.textContent = data.detail || 'Login failed.';
+                popupLoginMsg.classList.add('error');
+                return;
+            }
+
+            popupLoginMsg.textContent = 'Login success.';
+            popupLoginMsg.classList.remove('error');
+
+            setTimeout(() => {
+                closeModal();
+                window.location.reload();
+            }, 500);
+        } catch (err) {
+            popupLoginMsg.textContent = 'Network error. Try again.';
+            popupLoginMsg.classList.add('error');
+        }
+    });
+
+    function animate() {
+        x += (lFollowX - x) * friction;
+        y += (lFollowY - y) * friction;
+
+        bgImage.style.transform = `translate(${x}px, ${y}px) scale(1.1)`;
+
+        requestAnimationFrame(animate);
+    }
+
+    function handleMove(clientX, clientY) {
+        const lMouseX = Math.max(-100, Math.min(100, window.innerWidth / 2 - clientX));
+        const lMouseY = Math.max(-100, Math.min(100, window.innerHeight / 2 - clientY));
+        lFollowX = (20 * lMouseX) / 100;
+        lFollowY = (10 * lMouseY) / 100;
+    }
+
+    // Mouse movement for desktop
+    window.addEventListener('mousemove', e => handleMove(e.clientX, e.clientY));
+
+    // Touch movement for mobile
+    window.addEventListener('touchmove', e => {
+        if(e.touches.length > 0) {
+            handleMove(e.touches[0].clientX, e.touches[0].clientY);
+        }
+    });
+
+    animate();
+    </script>
+    </body>
+</html>
+

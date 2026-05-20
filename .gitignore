@@ -1,0 +1,11 @@
+.venv*
+.env
+**/__pycache__/
+*.pyc
+*.pyo
+migrations/
+menv
+__pycache__/
+*.pyc
+media/
+staticfiles/

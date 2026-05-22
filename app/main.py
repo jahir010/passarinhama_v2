@@ -13,7 +13,7 @@ from app.redis import init_redis, redis_client
 from app.routes import register_routes
 from app.utils.sync_permissions import seed_feature_permissions as sync_permissions
 from app.utils.auto_routing import get_module
-# from app.dummy.seed import seed_all_dummy_data
+from app.dummy.users import create_test_users
 
 # import logging
 # logging.basicConfig(level=logging.DEBUG)
@@ -68,11 +68,11 @@ async def run_startup_tasks() -> None:
 async def lifespan(routerAPI: FastAPI):
     await run_startup_tasks()
 
-    # if settings.CREATE_DUMMY_DATA:
-    #     try:
-    #         await seed_all_dummy_data()
-    #     except Exception as error:
-    #         print(f"startup seeding failed: {error}")
+    if settings.CREATE_DUMMY_DATA:
+        try:
+            await create_test_users()
+        except Exception as error:
+            print(f"startup seeding failed: {error}")
     yield
     if redis_client:
         await redis_client.aclose()

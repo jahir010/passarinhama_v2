@@ -34,6 +34,7 @@ class Training(models.Model):
     id              = fields.UUIDField(pk=True, default=uuid.uuid4)
     title           = fields.CharField(max_length=300)
     description     = fields.TextField(null=True)
+    instructor_name = fields.CharField(max_length=100, null=True)
     format          = fields.CharEnumField(TrainingFormat, default=TrainingFormat.ONLINE)
     training_date   = fields.DateField(null=True)
     end_date        = fields.DateField(null=True)

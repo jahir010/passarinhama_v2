@@ -45,8 +45,7 @@ class NotificationPreference(models.Model):
     async def is_enabled(
         cls,
         user_id,
-        notification_type: NotificationType,
-        forum_id=None,
+        notification_type: NotificationType
     ) -> bool:
         """
         Return True when the user has email notifications enabled for
@@ -55,8 +54,7 @@ class NotificationPreference(models.Model):
         """
         pref = await cls.get_or_none(
             user_id=user_id,
-            notification_type=notification_type,
-            forum_id=forum_id,
+            notification_type=notification_type
         )
         return pref.email_enabled if pref is not None else True
 
@@ -72,15 +70,13 @@ class NotificationPreference(models.Model):
             await cls.get_or_create(
                 user_id=user_id,
                 notification_type=ntype,
-                forum_id=None,
                 defaults={"email_enabled": True},
             )
 
     @classmethod
     async def opted_in_user_ids(
         cls,
-        notification_type: NotificationType,
-        forum_id=None,
+        notification_type: NotificationType
     ) -> List:
         """
         Return the list of user PKs that have NOT opted out of
@@ -101,7 +97,6 @@ class NotificationPreference(models.Model):
         opted_out = set(
             await cls.filter(
                 notification_type=notification_type,
-                forum_id=forum_id,
                 email_enabled=False,
             ).values_list("user_id", flat=True)
         )

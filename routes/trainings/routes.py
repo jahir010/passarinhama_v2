@@ -186,6 +186,7 @@ async def _serialize_training(training: Training, current_user: User | None = No
         "id":             str(training.id),
         "title":          training.title,
         "description":    training.description,
+        "instructor_name": training.instructor_name,
         "format":         training.format,
         "training_date":  training.training_date.isoformat() if training.training_date else None,
         "end_date":       training.end_date.isoformat() if training.end_date else None,
@@ -314,6 +315,7 @@ async def create_training(
     current_user:     User              = Depends(permission_required(FEATURES.TRAINING, "create")),
     title:            str               = Form(...),
     description:      Optional[str]     = Form(None),
+    instructor_name:  Optional[str]     = Form(None),
     format:           TrainingFormat    = Form(TrainingFormat.ONLINE),
     training_date:    Optional[str]     = Form(None),   # "YYYY-MM-DD"
     end_date:         Optional[str]     = Form(None),   # "YYYY-MM-DD"
@@ -370,6 +372,7 @@ async def create_training(
         max_attendees=max_attendees,
         attachments=attachment_urls if attachment_urls else None,
         created_by=current_user,
+        instructor_name=instructor_name,
     )
 
     roles = await Role.all()
@@ -404,6 +407,7 @@ async def update_training(
     current_user:          User                = Depends(permission_required(FEATURES.TRAINING, "edit")),
     title:                 Optional[str]        = Form(None),
     description:           Optional[str]        = Form(None),
+    instructor_name:       Optional[str]        = Form(None), 
     format:                Optional[TrainingFormat] = Form(None),
     training_date:         Optional[str]        = Form(None),   # "YYYY-MM-DD"
     end_date:              Optional[str]        = Form(None),   # "YYYY-MM-DD"
@@ -432,6 +436,8 @@ async def update_training(
         training.title = title
     if description is not None:
         training.description = description
+    if instructor_name is not None:
+        training.instructor_name = instructor_name
     if format is not None:
         training.format = format
     if training_date is not None:

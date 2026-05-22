@@ -467,7 +467,7 @@ async def pinned_topic_list(
             role=current_user.role,
             can_read=True,  # ✅ Only include topics the user can actually read
         )
-        if not perm:
+        if not perm and not current_user.is_superuser:
             continue
 
         result.append({

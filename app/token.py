@@ -283,7 +283,7 @@ async def get_current_user(
 
     # ── Load user from DB ────────────────────────────────────────────────
     try:
-        user = await User.get(id=payload.get("sub"))
+        user = await User.get(id=payload.get("sub")).prefetch_related("role")
     except DoesNotExist:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

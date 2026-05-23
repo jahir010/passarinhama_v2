@@ -413,6 +413,7 @@ async def update_training(
     end_date:              Optional[str]        = Form(None),   # "YYYY-MM-DD"
     duration_hours:        Optional[int]        = Form(None),
     max_attendees:         Optional[int]        = Form(None),
+    thumbnail:             Optional[UploadFile] = File(None),
     status:                Optional[TrainingStatus] = Form(None),
     new_attachments:       Optional[List[UploadFile]] = File(default=None),
     remove_attachment_urls: Optional[str]       = Form(None),   # JSON array of URLs to remove
@@ -456,6 +457,14 @@ async def update_training(
         training.max_attendees = max_attendees
     if status is not None:
         training.status = status
+    if thumbnail is not None:
+        # Upload new thumbnail and update URL
+        thumbnail_url = await update_file(
+            new_file=thumbnail,
+            file_url=training.thumbnail_url,
+            upload_to="training_thumbnails"
+        )
+        training.thumbnail_url = thumbnail_url
 
     # --- attachment management ---
     current_attachments: List[str] = training.attachments or []

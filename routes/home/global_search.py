@@ -120,6 +120,7 @@ async def global_search(
                     # reply_count and view_count shown on forum cards in the homepage
                     "reply_count", "view_count",
                     forum_name="forum__name",
+                    forum_id="forum_id",
                     author_name="author__first_name",
                 )
             )

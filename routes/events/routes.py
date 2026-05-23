@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Form, UploadFile, File
 from tortoise.expressions import F
 from pydantic import BaseModel, field_validator
 import uuid
@@ -6,6 +8,7 @@ from datetime import datetime, date, time, timezone as UTC
 
 from app.auth import login_required, role_required, superuser_required, permission_required
 from app.token import get_current_user
+from app.utils.file_manager import delete_file, save_file
 from app.utils.helper_functions import log_activity
 
 from applications.events.models import Event, EventRegistration, EventType
@@ -246,6 +249,7 @@ async def _serialize_event(event: Event, current_user: User | None = None) -> di
         "is_at_capacity": spots_left == 0 if spots_left is not None else False,
         "is_registered":  is_registered,
         "is_public":      event.is_public,
+        "attachments":    event.attachments,
         "created_at":     event.created_at.isoformat(),
         "created_by": {
             "id":         str(created_by.id),
@@ -360,12 +364,51 @@ async def get_event(
 
 @router.post("/events", tags=["Events"], status_code=201)
 async def create_event(
-    body:             EventCreate,
     background_tasks: BackgroundTasks,
+    title: str = Form(...),
+    event_type: EventType = Form(EventType.GENERAL),
+    event_date: str = Form(...),   # "YYYY-MM-DD"
+    event_time: str = Form(None), # "HH:MM"
+    end_date: str = Form(None),   # "YYYY-MM-DD"
+    location: str = Form(None),
+    description: str = Form(None),
+    max_attendees: int = Form(None),
+    is_public: bool = Form(False),
+    attachments:      List[UploadFile]  = File(default=[]),    
     current_user:     User = Depends(permission_required(FEATURES.EVENT, "create")),
 ):
-    event = await Event.create(**body.model_dump(), created_by=current_user)
-    await log_activity(current_user, ActivityActionType.EVENT_CREATED, "event", event.id, body.title)
+    parsed_date: Optional[date] = None
+    parsed_end_date: Optional[date] = None
+    if event_date:
+        try:
+            parsed_date = date.fromisoformat(event_date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="training_date must be YYYY-MM-DD format.")
+
+    if end_date:
+        try:
+            parsed_end_date = date.fromisoformat(end_date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="end_date must be YYYY-MM-DD format.")
+    attachment_urls: List[str] = []
+    for file in attachments:
+        if file.filename:
+            file_url = await save_file(file, upload_to="training_attachments")
+            attachment_urls.append(file_url)
+    event = await Event.create(
+        title=title,
+        event_type=event_type,
+        event_date=parsed_date,
+        event_time=event_time,
+        end_date=parsed_end_date,
+        location=location,
+        description=description,
+        max_attendees=max_attendees,
+        is_public=is_public,
+        attachments=attachment_urls,
+        created_by=current_user
+    )
+    await log_activity(current_user, ActivityActionType.EVENT_CREATED, "event", event.id, event.title)
 
     # FIX: filter by notification preference, not all active users
     # NotificationPreference stores per-user per-type opt-in/out
@@ -385,15 +428,77 @@ async def create_event(
 @router.patch("/events/{event_id}", tags=["Events"])
 async def update_event(
     event_id:     uuid.UUID,
-    body:         EventUpdate,
+    title: Optional[str] = Form(None),
+    event_type: Optional[EventType] = Form(None),
+    event_date: Optional[str] = Form(None),   # "YYYY-MM-DD"
+    event_time: Optional[str] = Form(None), # "HH:MM"
+    end_date: Optional[str] = Form(None),   # "YYYY-MM-DD"
+    location: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    max_attendees: Optional[int] = Form(None),
+    is_public: Optional[bool] = Form(None),
+    new_attachments: Optional[List[UploadFile]] = File(default=[]),
+    remove_attachment_urls: Optional[str]       = Form(None),
     current_user: User = Depends(permission_required(FEATURES.EVENT, "edit")),
 ):
     event = await Event.get_or_none(id=event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found.")
 
-    for field, value in body.model_dump(exclude_none=True).items():
-        setattr(event, field, value)
+    if title is not None:
+        event.title = title
+    if event_type is not None:
+        event.event_type = event_type
+
+    if event_date is not None:
+        try:
+            event.event_date = date.fromisoformat(event_date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="event_date must be YYYY-MM-DD format.")
+    if end_date is not None:
+        try:
+            event.end_date = date.fromisoformat(end_date)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="end_date must be YYYY-MM-DD format.")
+    if event_time is not None:
+        try:
+            event.event_time = datetime.strptime(event_time, "%H:%M").time()
+        except ValueError:
+            raise HTTPException(status_code=422, detail="event_time must be HH:MM format.")
+    if location is not None:
+        event.location = location
+    if description is not None:
+        event.description = description
+    if max_attendees is not None:
+         event.max_attendees = max_attendees
+    if is_public is not None:
+        event.is_public = is_public
+    
+    current_attachments: List[str] = event.attachments or []
+    if remove_attachment_urls:
+        import json
+        try:
+            # Handle both JSON array and plain single URL string
+            stripped = remove_attachment_urls.strip()
+            if stripped.startswith("["):
+                urls_to_remove: List[str] = json.loads(stripped)
+            else:
+                # Treat as a single URL passed without brackets
+                urls_to_remove = [stripped]
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail="remove_attachment_urls must be a valid JSON array of strings.")
+        for url in urls_to_remove:
+            await delete_file(url)
+        current_attachments = [u for u in current_attachments if u not in urls_to_remove]
+
+    # Upload and append new attachments
+    if new_attachments:
+        for file in new_attachments:
+            if file.filename:
+                file_url = await save_file(file, upload_to="training_attachments")
+                current_attachments.append(file_url)
+
+    event.attachments = current_attachments if current_attachments else None
     await event.save()
     return await _serialize_event(event, current_user)
 

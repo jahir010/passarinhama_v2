@@ -29,6 +29,7 @@ class Event(models.Model):
     location      = fields.CharField(max_length=300, null=True)
     description   = fields.TextField(null=True)
     max_attendees = fields.IntField(null=True)
+    attachments     = fields.JSONField(null=True)
     is_public     = fields.BooleanField(default=False)
     created_by    = fields.ForeignKeyField("models.User", related_name="events", on_delete=fields.RESTRICT)
     created_at    = fields.DatetimeField(auto_now_add=True)

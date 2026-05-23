@@ -1,4 +1,5 @@
 
+import ast
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status, Query, BackgroundTasks
@@ -319,20 +320,42 @@ async def update_article(
 
     current_attachments: List[str] = article.structured_fields["file_urls"] or []
     if remove_attachment_urls:
-        import json
+        raw = remove_attachment_urls.strip()
+
+        urls_to_remove: List[str] = []
+
         try:
-            # Handle both JSON array and plain single URL string
-            stripped = remove_attachment_urls.strip()
-            if stripped.startswith("["):
-                urls_to_remove: List[str] = json.loads(stripped)
+            # Case 1: real JSON
+            if raw.startswith("["):
+                urls_to_remove = json.loads(raw)
+
+            # Case 2: Python list string like "['a','b']"
+            elif raw.startswith("'[") or raw.startswith("["):
+                urls_to_remove = ast.literal_eval(raw)
+
+            # Case 3: comma-separated fallback
+            elif "," in raw:
+                urls_to_remove = [u.strip() for u in raw.split(",")]
+
+            # Case 4: single value
             else:
-                # Treat as a single URL passed without brackets
-                urls_to_remove = [stripped]
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=422, detail="remove_attachment_urls must be a valid JSON array of strings.")
+                urls_to_remove = [raw]
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid remove_attachment_urls format: {str(e)}"
+            )
+
+        print("FINAL PARSED:", urls_to_remove)
+
         for url in urls_to_remove:
             await delete_file(url)
-        current_attachments = [u for u in current_attachments if u not in urls_to_remove]
+
+        current_attachments = [
+            u for u in current_attachments
+            if u not in urls_to_remove
+        ]
 
     # Upload and append new attachments
     if files:

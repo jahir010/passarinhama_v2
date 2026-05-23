@@ -3,6 +3,8 @@ from typing import List, Optional
 from pydantic import BaseModel, field_validator, model_validator
 import uuid
 from datetime import date, datetime
+import json
+import ast
 
 from app.auth import login_required, role_required, permission_required, superuser_required
 from app.token import get_current_user
@@ -469,29 +471,43 @@ async def update_training(
     # --- attachment management ---
     current_attachments: List[str] = training.attachments or []
 
-    # Remove requested URLs and delete from storage
-    # if remove_attachment_urls:
-    #     import json
-    #     try:
-    #         urls_to_remove: List[str] = json.loads(remove_attachment_urls)
-    #     except (ValueError, TypeError):
-    #         raise HTTPException(status_code=422, detail="remove_attachment_urls must be a valid JSON array of strings.")
     if remove_attachment_urls:
-        import json
+        raw = remove_attachment_urls.strip()
+
+        urls_to_remove: List[str] = []
+
         try:
-            # Handle both JSON array and plain single URL string
-            stripped = remove_attachment_urls.strip()
-            if stripped.startswith("["):
-                urls_to_remove: List[str] = json.loads(stripped)
+            # Case 1: real JSON
+            if raw.startswith("["):
+                urls_to_remove = json.loads(raw)
+
+            # Case 2: Python list string like "['a','b']"
+            elif raw.startswith("'[") or raw.startswith("["):
+                urls_to_remove = ast.literal_eval(raw)
+
+            # Case 3: comma-separated fallback
+            elif "," in raw:
+                urls_to_remove = [u.strip() for u in raw.split(",")]
+
+            # Case 4: single value
             else:
-                # Treat as a single URL passed without brackets
-                urls_to_remove = [stripped]
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=422, detail="remove_attachment_urls must be a valid JSON array of strings.")
+                urls_to_remove = [raw]
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid remove_attachment_urls format: {str(e)}"
+            )
+
+        print("FINAL PARSED:", urls_to_remove)
+
         for url in urls_to_remove:
             await delete_file(url)
-        current_attachments = [u for u in current_attachments if u not in urls_to_remove]
 
+        current_attachments = [
+            u for u in current_attachments
+            if u not in urls_to_remove
+        ]
     # Upload and append new attachments
     if new_attachments:
         for file in new_attachments:

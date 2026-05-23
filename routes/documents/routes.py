@@ -132,44 +132,6 @@ async def _get_folder_depth(folder_id: uuid.UUID) -> int:
 
 
 
-
-
-# @router.get("/documents/folders", tags=["Documents"])
-# async def list_folders(
-#     current_user: User = Depends(permission_required(FEATURES.DOCUMENT, "view"))
-# ):
-#     if current_user.is_superuser:
-#         all_folders = await DocumentFolder.all().order_by("name")
-#     else:
-#         perms = await DocumentFolderPermission.filter(
-#             role=current_user.role, can_read=True
-#         ).prefetch_related("folder")
-
-#         # Build lookup: folder_id → (folder, can_upload)
-#         accessible: dict[str, tuple] = {}
-#         for p in perms:
-#             accessible[str(p.folder_id)] = (p.folder, p.can_upload)
-
-#         all_folders = [f for f, _ in accessible.values()]
-
-#     # Group folders by parent_id for O(1) child lookup
-#     children_map: dict[str | None, list] = {}
-#     for folder in all_folders:
-#         key = str(folder.parent_id) if folder.parent_id else None
-#         children_map.setdefault(key, []).append(folder)
-
-#     def build_subtree(parent_id: str | None) -> list:
-#         folders = children_map.get(parent_id, [])
-#         result = []
-#         for folder in sorted(folders, key=lambda f: f.name):
-#             _, can_upload = accessible.get(str(folder.id), (None, False))
-#             children = build_subtree(str(folder.id))
-#             result.append(_serialize_folder(folder, can_upload, children))
-#         return result
-
-#     return build_subtree(None)
-
-
 @router.get("/documents/folders", tags=["Documents"])
 async def list_folders(
     current_user: User = Depends(permission_required(FEATURES.DOCUMENT, "view"))

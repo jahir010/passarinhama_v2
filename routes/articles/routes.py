@@ -1,5 +1,5 @@
 
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status, Query, BackgroundTasks
 from tortoise.transactions import in_transaction
@@ -292,9 +292,8 @@ async def update_article(
     body: str = Form(None),
     thumbnail: UploadFile = File(None),
     structured_fields: str = Form(None),  # JSON string
-
     files: list[UploadFile] = File(None),
-
+    remove_attachment_urls: Optional[str] = Form(None),
     current_user: User = Depends(permission_required(FEATURES.ARTICLE, "edit"))
 ):
     article = await Article.get_or_none(id=article_id)
@@ -315,22 +314,36 @@ async def update_article(
             parsed_structured_fields.update(json.loads(structured_fields))
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid structured_fields JSON.")
+        
 
-    # handle file uploads
+
+    current_attachments: List[str] = article.structured_fields["file_urls"] or []
+    if remove_attachment_urls:
+        import json
+        try:
+            # Handle both JSON array and plain single URL string
+            stripped = remove_attachment_urls.strip()
+            if stripped.startswith("["):
+                urls_to_remove: List[str] = json.loads(stripped)
+            else:
+                # Treat as a single URL passed without brackets
+                urls_to_remove = [stripped]
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail="remove_attachment_urls must be a valid JSON array of strings.")
+        for url in urls_to_remove:
+            await delete_file(url)
+        current_attachments = [u for u in current_attachments if u not in urls_to_remove]
+
+    # Upload and append new attachments
     if files:
-        file_urls = []
-        if article.structured_fields and article.structured_fields["file_urls"]:
-            for url in article.structured_fields["file_urls"]:
-                await delete_file(url)
+        for file in files:
+            if file.filename:
+                file_url = await save_file(file, upload_to="articles")
+                current_attachments.append(file_url)
 
-        for upload in files:
-            url = await save_file(upload, upload_to="articles")
-            file_urls.append(url)
+    article.structured_fields["file_urls"] = current_attachments if current_attachments else None
 
-        parsed_structured_fields["file_urls"] = (
-            parsed_structured_fields.get("file_urls", []) + file_urls
-        )
-
+   
     # update fields if provided
     if title is not None:
         article.title = title

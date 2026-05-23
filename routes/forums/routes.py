@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
 
@@ -807,6 +807,7 @@ async def update_post(
     post_id: uuid.UUID,
     content: str = Form(None),
     files:   list[UploadFile] = File(None),
+    remove_attachment_urls: Optional[str] = Form(None),
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
     """
@@ -822,15 +823,33 @@ async def update_post(
     if content is not None:
         post.content = content
 
-    if files is not None:
-        if post.attachment:
-            for file_url in post.attachment:
-                await delete_file(file_url)
-        attachments = []
-        for f in files:
-            file_url = await save_file(file=f, upload_to="post_attachments")
-            attachments.append(file_url)
-        post.attachment = attachments
+
+    current_attachments: List[str] = post.attachment or []
+    if remove_attachment_urls:
+        import json
+        try:
+            # Handle both JSON array and plain single URL string
+            stripped = remove_attachment_urls.strip()
+            if stripped.startswith("["):
+                urls_to_remove: List[str] = json.loads(stripped)
+            else:
+                # Treat as a single URL passed without brackets
+                urls_to_remove = [stripped]
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail="remove_attachment_urls must be a valid JSON array of strings.")
+        for url in urls_to_remove:
+            await delete_file(url)
+        current_attachments = [u for u in current_attachments if u not in urls_to_remove]
+
+    # Upload and append new attachments
+    if files:
+        for file in files:
+            if file.filename:
+                file_url = await save_file(file, upload_to="training_attachments")
+                current_attachments.append(file_url)
+
+    post.attachment = current_attachments if current_attachments else None
+
 
     await post.save()
     await log_activity(current_user, ActivityActionType.POST_UPDATED, "post", post.id)

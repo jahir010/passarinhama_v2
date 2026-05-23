@@ -197,7 +197,7 @@ async def create_article(
     excerpt: str = Form(None),
     body: str = Form(None),
     status: ArticleStatus = Form(ArticleStatus.PENDING),
-    thumbnail_url: str = Form(None),
+    thumbnail: UploadFile = File(None),
     structured_fields: str = Form(None),  # JSON string
     files: list[UploadFile] = File(None),
     current_user: User = Depends(permission_required(FEATURES.ARTICLE, "create"))
@@ -217,6 +217,11 @@ async def create_article(
             url = await save_file(upload, upload_to="articles")
             file_urls.append(url)
         parsed_structured_fields["file_urls"] = file_urls
+    
+    if thumbnail is not None:
+        thumbnail_url = await save_file(thumbnail, upload_to="articles")
+    else:
+        thumbnail_url = None
 
     article = await Article.create(
         title=title,
@@ -281,12 +286,11 @@ async def get_article(article_id: uuid.UUID, current_user: User | None = Depends
 @router.patch("/articles/{article_id}", tags=["Articles"])
 async def update_article(
     article_id: uuid.UUID,
-
     title: str = Form(None),
     category_id: uuid.UUID = Form(None),
     excerpt: str = Form(None),
     body: str = Form(None),
-    thumbnail_url: str = Form(None),
+    thumbnail: UploadFile = File(None),
     structured_fields: str = Form(None),  # JSON string
 
     files: list[UploadFile] = File(None),
@@ -334,8 +338,8 @@ async def update_article(
         article.excerpt = excerpt
     if body is not None:
         article.body = body
-    if thumbnail_url is not None:
-        article.thumbnail_url = thumbnail_url
+    if thumbnail is not None:
+        article.thumbnail_url = await update_file(thumbnail, file_url=article.thumbnail_url, upload_to="articles")
 
     article.structured_fields = parsed_structured_fields
 

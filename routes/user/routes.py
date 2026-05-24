@@ -396,6 +396,15 @@ async def list_roles(current_user: User = Depends(login_required)):
     roles = await Role.all()
     return [_serialize_role(role) for role in roles]
 
+@router.get("/permissions/roles", tags=["Roles & Permissions"])
+async def list_roles_with_permissions(feature: FEATURES | None = None, current_user: User = Depends(login_required)):
+    qs = Role.all().prefetch_related("feature_permissions")
+    if feature:
+        qs = qs.filter(feature_permissions__feature=feature, feature_permissions__can_view=True)
+    roles = await qs
+    
+    return [_serialize_role(role) for role in roles]
+
 
 @router.post("/roles", tags=["Roles & Permissions"], status_code=201)
 async def create_role(

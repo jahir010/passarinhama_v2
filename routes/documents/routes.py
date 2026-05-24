@@ -110,6 +110,18 @@ def _serialize_document(doc: Document, uploader) -> dict:
     }
 
 
+def _serialize_document_permission(perm: DocumentFolderPermission) -> dict:
+    return {
+        "id": str(perm.id),
+        "folder_id": str(perm.folder.id),
+        "folder_name": perm.folder.name,
+        "role_id": str(perm.role.id),
+        "role_name": perm.role.name,
+        "can_read": perm.can_read,
+        "can_upload": perm.can_upload,
+    }
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Depth helper
 # ──────────────────────────────────────────────────────────────────────────────
@@ -230,11 +242,8 @@ async def get_folder_permissions(
     if not folder:
         raise HTTPException(status_code=404, detail="Folder not found.")
 
-    perms = await DocumentFolderPermission.filter(folder=folder).all().prefetch_related("role")
-    return {
-        str(p.role.name): {"can_read": p.can_read, "can_upload": p.can_upload}
-        for p in perms
-    }
+    perms = await DocumentFolderPermission.filter(folder=folder).all().prefetch_related("role", "folder")
+    return [_serialize_document_permission(p) for p in perms]
 
 
 @router.patch("/documents/folders/{folder_id}/permissions", tags=["Documents"])

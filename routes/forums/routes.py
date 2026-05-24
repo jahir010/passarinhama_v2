@@ -151,6 +151,18 @@ async def _notify_post_rejection(email: str) -> None:
         print(f"[notify] Failed to send rejection email: {e}", flush=True)
 
 
+def _serialize_permission(perm: ForumRolePermission) -> dict:
+    return {
+        "id": str(perm.id),
+        "forum_id": str(perm.forum.id),
+        "forum_name": perm.forum.name,
+        "role_id": str(perm.role.id),
+        "role_name": perm.role.name,
+        "can_read": perm.can_read,
+        "can_post": perm.can_post
+    }
+
+
 
 
 
@@ -360,9 +372,11 @@ async def get_forum_permissions(
     forum = await Forum.get_or_none(id=forum_id)
     if not forum:
         raise HTTPException(status_code=404, detail="Forum not found.")
-    perms = await ForumRolePermission.filter(forum=forum).all()
-    return perms
+    perms = await ForumRolePermission.filter(forum=forum).all().prefetch_related("role", "forum")
+    return [_serialize_permission(perm) for perm in perms]
 
+
+        
 
 # ── Topics ─────────────────────────────────────────────────────────────────
 

@@ -210,6 +210,19 @@ async def _serialize_training(training: Training, current_user: User | None = No
     }
 
 
+
+def _serialize_training_permission(perm: TrainingRolePermission) -> dict:
+    return {
+        "id": str(perm.id),
+        "training_id": str(perm.training.id),
+        "training_name": perm.training.title,
+        "role_id": str(perm.role.id),
+        "role_name": perm.role.name,
+        "can_read": perm.can_read,
+        "can_write": perm.can_write
+    }
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TRAININGS
 # Fixed-path routes (/upcoming, /dashboard-widget) MUST come before
@@ -710,5 +723,5 @@ async def get_forum_permissions(
     training = await Training.get_or_none(id=training_id)
     if not training:
         raise HTTPException(status_code=404, detail="Forum not found.")
-    perms = await TrainingRolePermission.filter(training=training).all()
-    return perms
+    perms = await TrainingRolePermission.filter(training=training).all().prefetch_related("role", "training")
+    return [_serialize_training_permission(p) for p in perms]

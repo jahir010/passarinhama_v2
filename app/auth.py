@@ -86,9 +86,10 @@ def role_required(*slugs: str, allow_superuser: bool = True):
 # ─────────────────────────────────────────────────────────────────────────────
 # Feature-permission dependency factory
 #
-# This is the primary guard for role-based feature access.
+# This is the primary guard for feature access.
 # Each role has a FeaturePermission row per feature with boolean flags
-# (can_view, can_create, can_edit, can_delete).
+# (can_view, can_create, can_edit, can_delete), and users may also have
+# per-user overrides through User.has_permission().
 # Superusers bypass all checks.
 # ─────────────────────────────────────────────────────────────────────────────
 

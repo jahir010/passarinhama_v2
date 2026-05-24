@@ -110,6 +110,32 @@ class FeaturePermission(models.Model):
 # User
 # ─────────────────────────────────────────
 
+class UserFeaturePermission(models.Model):
+    """
+    Stores user-specific permission overrides for a feature.
+
+    Any flag left as NULL falls back to the user's role permission.
+    """
+    id         = fields.UUIDField(pk=True, default=uuid.uuid4)
+    user       = fields.ForeignKeyField(
+        "models.User",
+        related_name="feature_permission_overrides",
+        on_delete=fields.CASCADE,
+    )
+    feature    = fields.CharEnumField(FEATURES, default=FEATURES.USER)
+    can_view   = fields.BooleanField(null=True)
+    can_create = fields.BooleanField(null=True)
+    can_edit   = fields.BooleanField(null=True)
+    can_delete = fields.BooleanField(null=True)
+
+    class Meta:
+        table           = "user_feature_permissions"
+        unique_together = [("user", "feature")]
+
+    def __str__(self) -> str:
+        return f"{self.user_id} -> {self.feature}"
+
+
 class User(models.Model):
     id                   = fields.UUIDField(pk=True, default=uuid.uuid4)
     email                = fields.CharField(max_length=255, unique=True)
@@ -211,7 +237,8 @@ class User(models.Model):
     # feature: FEATURES enum value  e.g. FEATURES.ARTICLE
     #
     # Superusers bypass all permission checks (always True).
-    # Users without a role are denied every permission.
+    # User-specific overrides are checked before role permissions.
+    # Users without a role are denied unless an explicit user override allows it.
 
     async def has_permission(self, feature: FEATURES, action: str) -> bool:
         """
@@ -232,6 +259,12 @@ class User(models.Model):
         field_name = action_map.get(action)
         if field_name is None:
             raise ValueError(f"Unknown permission action: '{action}'. Must be one of {list(action_map)}")
+
+        override = await UserFeaturePermission.get_or_none(user_id=self.id, feature=feature)
+        if override is not None:
+            override_value = getattr(override, field_name, None)
+            if override_value is not None:
+                return bool(override_value)
 
         try:
             role_id = self.role_id  # avoid extra DB hit if already fetched

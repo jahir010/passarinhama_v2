@@ -15,7 +15,7 @@ from app.auth import login_required, permission_required, superuser_required
 from app.token import get_current_user
 from app.utils.send_email import send_email
 from applications.user.models import (
-    FEATURES, FeaturePermission, User, Role, UserStatus,
+    FEATURES, FeaturePermission, UserFeaturePermission, User, Role, UserStatus,
     ActivityActionType, ActivityLog, UserSession,
 )
 from app.utils.file_manager import update_file, save_file, delete_file
@@ -89,6 +89,37 @@ class FeaturePermissionOut(BaseModel):
         from_attributes = True
 
 
+class UserFeaturePermissionCreate(BaseModel):
+    """Body for creating or fully replacing a user's permission overrides on a feature."""
+    user_id:     uuid.UUID
+    feature:     FEATURES
+    can_view:    bool | None = None
+    can_create:  bool | None = None
+    can_edit:    bool | None = None
+    can_delete:  bool | None = None
+
+
+class UserFeaturePermissionUpdate(BaseModel):
+    """Body for patching individual user override flags on an existing override row."""
+    can_view:    bool | None = None
+    can_create:  bool | None = None
+    can_edit:    bool | None = None
+    can_delete:  bool | None = None
+
+
+class UserFeaturePermissionOut(BaseModel):
+    id:          uuid.UUID
+    user_id:     uuid.UUID
+    feature:     FEATURES
+    can_view:    bool | None
+    can_create:  bool | None
+    can_edit:    bool | None
+    can_delete:  bool | None
+
+    class Config:
+        from_attributes = True
+
+
 class SessionOut(BaseModel):
     id:           uuid.UUID
     device_name:  str | None
@@ -137,8 +168,73 @@ def _serialize_role(role: Role) -> dict:
     }
 
 
+async def _role_permission_map(role_id: uuid.UUID | None) -> dict[str, dict[str, bool]]:
+    if role_id is None:
+        return {}
+
+    rows = await FeaturePermission.filter(role_id=role_id).values(
+        "feature", "can_view", "can_create", "can_edit", "can_delete"
+    )
+    return {
+        (row["feature"].value if hasattr(row["feature"], "value") else str(row["feature"])): row
+        for row in rows
+    }
+
+
+async def _ensure_user_permissions_seeded(
+    user: User,
+    previous_role_id: uuid.UUID | None = None,
+) -> list[dict]:
+    role_permission_map = await _role_permission_map(user.role_id)
+    existing_rows = await UserFeaturePermission.filter(user_id=user.id)
+    existing_map = {
+        (row.feature.value if hasattr(row.feature, "value") else str(row.feature)): row
+        for row in existing_rows
+    }
+    previous_role_permission_map = await _role_permission_map(previous_role_id)
+
+    for feature in FEATURES:
+        feature_key = feature.value
+        role_perm = role_permission_map.get(feature_key)
+        if role_perm is None:
+            continue
+
+        current_row = existing_map.get(feature_key)
+        if current_row is None:
+            current_row = await UserFeaturePermission.create(
+                user=user,
+                feature=feature,
+                can_view=role_perm["can_view"],
+                can_create=role_perm["can_create"],
+                can_edit=role_perm["can_edit"],
+                can_delete=role_perm["can_delete"],
+            )
+            existing_map[feature_key] = current_row
+            continue
+
+        previous_role_perm = previous_role_permission_map.get(feature_key)
+        if previous_role_perm and (
+            current_row.can_view == previous_role_perm["can_view"]
+            and current_row.can_create == previous_role_perm["can_create"]
+            and current_row.can_edit == previous_role_perm["can_edit"]
+            and current_row.can_delete == previous_role_perm["can_delete"]
+        ):
+            current_row.can_view = role_perm["can_view"]
+            current_row.can_create = role_perm["can_create"]
+            current_row.can_edit = role_perm["can_edit"]
+            current_row.can_delete = role_perm["can_delete"]
+            await current_row.save(update_fields=["can_view", "can_create", "can_edit", "can_delete"])
+
+    return await UserFeaturePermission.filter(user_id=user.id).values(
+        "feature", "can_view", "can_create", "can_edit", "can_delete"
+    )
+
+
 async def _serialize_user(user: User) -> dict:
-    permissions = await FeaturePermission.filter(role_id=user.role_id).values("feature", "can_view", "can_create", "can_edit", "can_delete")
+    role_permissions = await FeaturePermission.filter(role_id=user.role_id).values(
+        "feature", "can_view", "can_create", "can_edit", "can_delete"
+    )
+    user_permissions = await _ensure_user_permissions_seeded(user)
 
     return {
         "id":                   str(user.id),
@@ -165,7 +261,8 @@ async def _serialize_user(user: User) -> dict:
         "last_login_at":        user.last_login_at,
         "created_at":           user.created_at,
         "is_deleted":           user.is_deleted,
-        "permissions":          permissions,
+        "permissions":          role_permissions,
+        "user_permissions":     user_permissions,
     }
 
 
@@ -405,6 +502,94 @@ async def delete_permission(
 # Routes — Member Directory
 # ─────────────────────────────────────────────────────────────────────────────
 
+@router.get("/user-permissions", tags=["Roles & Permissions"])
+async def list_user_permissions(
+    user_id: uuid.UUID | None = None,
+    current_user: User = Depends(login_required),
+):
+    """List all user-specific feature permission overrides, optionally filtered by user."""
+    if user_id:
+        user = await User.get_or_none(id=user_id, is_deleted=False)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+        await _ensure_user_permissions_seeded(user)
+
+    qs = UserFeaturePermission.all().prefetch_related("user")
+    if user_id:
+        qs = qs.filter(user_id=user_id)
+    permissions = await qs
+    return [UserFeaturePermissionOut.model_validate(p) for p in permissions]
+
+
+@router.post("/user-permissions", tags=["Roles & Permissions"], status_code=201)
+async def create_user_permission(
+    body: UserFeaturePermissionCreate,
+    current_user: User = Depends(superuser_required),
+):
+    """
+    Create or replace a user's feature permission overrides.
+
+    Any field left as null falls back to the user's role permission.
+    """
+    user = await User.get_or_none(id=body.user_id, is_deleted=False)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    perm, _ = await UserFeaturePermission.get_or_create(
+        user=user,
+        feature=body.feature,
+        defaults={
+            "can_view": body.can_view,
+            "can_create": body.can_create,
+            "can_edit": body.can_edit,
+            "can_delete": body.can_delete,
+        },
+    )
+    perm.can_view = body.can_view
+    perm.can_create = body.can_create
+    perm.can_edit = body.can_edit
+    perm.can_delete = body.can_delete
+    await perm.save()
+
+    return UserFeaturePermissionOut.model_validate(perm)
+
+
+@router.patch("/user-permissions/{permission_id}", tags=["Roles & Permissions"])
+async def update_user_permission(
+    permission_id: uuid.UUID,
+    body: UserFeaturePermissionUpdate,
+    current_user: User = Depends(superuser_required),
+):
+    """Partially update individual user override flags."""
+    perm = await UserFeaturePermission.get_or_none(id=permission_id)
+    if not perm:
+        raise HTTPException(status_code=404, detail="User permission override not found.")
+
+    if "can_view" in body.model_fields_set:
+        perm.can_view = body.can_view
+    if "can_create" in body.model_fields_set:
+        perm.can_create = body.can_create
+    if "can_edit" in body.model_fields_set:
+        perm.can_edit = body.can_edit
+    if "can_delete" in body.model_fields_set:
+        perm.can_delete = body.can_delete
+
+    await perm.save()
+    return UserFeaturePermissionOut.model_validate(perm)
+
+
+@router.delete("/user-permissions/{permission_id}", status_code=204, tags=["Roles & Permissions"])
+async def delete_user_permission(
+    permission_id: uuid.UUID,
+    current_user: User = Depends(superuser_required),
+):
+    """Remove a user-specific feature permission override row."""
+    perm = await UserFeaturePermission.get_or_none(id=permission_id)
+    if not perm:
+        raise HTTPException(status_code=404, detail="User permission override not found.")
+    await perm.delete()
+
+
 @router.get("/users", tags=["Members"])
 async def list_users(
     search:     str | None = None,
@@ -516,6 +701,7 @@ async def create_user(
         is_payment_validated=payment_validated,
         member_since=datetime.now(UTC.utc),
     )
+    await _ensure_user_permissions_seeded(user)
     await log_activity(
         current_user, ActivityActionType.USER_REGISTERED, "user", user.id,
         f"New member created: {user.full_name}",
@@ -666,6 +852,7 @@ async def update_user(
     user = await User.get_or_none(id=user_id, is_deleted=False)
     if not user:
         raise HTTPException(status_code=404, detail="Member not found.")
+    previous_role_id = user.role_id
 
     if first_name is not None:
         user.first_name = first_name
@@ -699,6 +886,8 @@ async def update_user(
         user.is_payment_validated = payment_validated
 
     await user.save()
+    if role_id is not None:
+        await _ensure_user_permissions_seeded(user, previous_role_id=previous_role_id)
     await user.fetch_related("role")
     return await _serialize_user(user)
 

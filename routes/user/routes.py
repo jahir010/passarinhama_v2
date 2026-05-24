@@ -230,6 +230,60 @@ async def _ensure_user_permissions_seeded(
     )
 
 
+def _permission_flags_snapshot(
+    can_view: bool,
+    can_create: bool,
+    can_edit: bool,
+    can_delete: bool,
+) -> dict[str, bool]:
+    return {
+        "can_view": can_view,
+        "can_create": can_create,
+        "can_edit": can_edit,
+        "can_delete": can_delete,
+    }
+
+
+async def _sync_role_permission_to_users(
+    role_id: uuid.UUID,
+    feature: FEATURES,
+    previous_flags: dict[str, bool],
+    new_flags: dict[str, bool],
+) -> None:
+    users = await User.filter(role_id=role_id).all()
+    if not users:
+        return
+
+    user_ids = [user.id for user in users]
+    existing_rows = await UserFeaturePermission.filter(user_id__in=user_ids, feature=feature)
+    existing_map = {row.user_id: row for row in existing_rows}
+
+    for user in users:
+        row = existing_map.get(user.id)
+        if row is None:
+            await UserFeaturePermission.create(
+                user=user,
+                feature=feature,
+                can_view=new_flags["can_view"],
+                can_create=new_flags["can_create"],
+                can_edit=new_flags["can_edit"],
+                can_delete=new_flags["can_delete"],
+            )
+            continue
+
+        if (
+            row.can_view == previous_flags["can_view"]
+            and row.can_create == previous_flags["can_create"]
+            and row.can_edit == previous_flags["can_edit"]
+            and row.can_delete == previous_flags["can_delete"]
+        ):
+            row.can_view = new_flags["can_view"]
+            row.can_create = new_flags["can_create"]
+            row.can_edit = new_flags["can_edit"]
+            row.can_delete = new_flags["can_delete"]
+            await row.save(update_fields=["can_view", "can_create", "can_edit", "can_delete"])
+
+
 async def _serialize_user(user: User) -> dict:
     role_permissions = await FeaturePermission.filter(role_id=user.role_id).values(
         "feature", "can_view", "can_create", "can_edit", "can_delete"
@@ -442,6 +496,14 @@ async def create_permission(
     if not role:
         raise HTTPException(status_code=404, detail="Role not found.")
 
+    existing_perm = await FeaturePermission.get_or_none(role=role, feature=body.feature)
+    previous_flags = _permission_flags_snapshot(
+        can_view=existing_perm.can_view if existing_perm else False,
+        can_create=existing_perm.can_create if existing_perm else False,
+        can_edit=existing_perm.can_edit if existing_perm else False,
+        can_delete=existing_perm.can_delete if existing_perm else False,
+    )
+
     perm, _ = await FeaturePermission.get_or_create(
         role=role,
         feature=body.feature,
@@ -458,6 +520,17 @@ async def create_permission(
     perm.can_edit   = body.can_edit
     perm.can_delete = body.can_delete
     await perm.save()
+    await _sync_role_permission_to_users(
+        role_id=role.id,
+        feature=body.feature,
+        previous_flags=previous_flags,
+        new_flags=_permission_flags_snapshot(
+            can_view=perm.can_view,
+            can_create=perm.can_create,
+            can_edit=perm.can_edit,
+            can_delete=perm.can_delete,
+        ),
+    )
 
     return FeaturePermissionOut.model_validate(perm)
 
@@ -473,6 +546,13 @@ async def update_permission(
     if not perm:
         raise HTTPException(status_code=404, detail="Permission not found.")
 
+    previous_flags = _permission_flags_snapshot(
+        can_view=perm.can_view,
+        can_create=perm.can_create,
+        can_edit=perm.can_edit,
+        can_delete=perm.can_delete,
+    )
+
     if body.can_view is not None:
         perm.can_view = body.can_view
     if body.can_create is not None:
@@ -483,6 +563,17 @@ async def update_permission(
         perm.can_delete = body.can_delete
 
     await perm.save()
+    await _sync_role_permission_to_users(
+        role_id=perm.role_id,
+        feature=perm.feature,
+        previous_flags=previous_flags,
+        new_flags=_permission_flags_snapshot(
+            can_view=perm.can_view,
+            can_create=perm.can_create,
+            can_edit=perm.can_edit,
+            can_delete=perm.can_delete,
+        ),
+    )
     return FeaturePermissionOut.model_validate(perm)
 
 
@@ -495,7 +586,26 @@ async def delete_permission(
     perm = await FeaturePermission.get_or_none(id=permission_id)
     if not perm:
         raise HTTPException(status_code=404, detail="Permission not found.")
+    previous_flags = _permission_flags_snapshot(
+        can_view=perm.can_view,
+        can_create=perm.can_create,
+        can_edit=perm.can_edit,
+        can_delete=perm.can_delete,
+    )
+    role_id = perm.role_id
+    feature = perm.feature
     await perm.delete()
+    await _sync_role_permission_to_users(
+        role_id=role_id,
+        feature=feature,
+        previous_flags=previous_flags,
+        new_flags=_permission_flags_snapshot(
+            can_view=False,
+            can_create=False,
+            can_edit=False,
+            can_delete=False,
+        ),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

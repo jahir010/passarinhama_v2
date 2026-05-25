@@ -10,6 +10,7 @@ from app.auth import permission_required, superuser_required
 from app.token import get_current_user
 from app.utils.helper_functions import log_activity
 from app.utils.file_manager import save_file, delete_file, update_file
+from app.utils.helper_functions import check_training_access
 
 from applications.trainings.models import Training, TrainingFormat, TrainingStatus, TrainingRegistration, TrainingRolePermission
 from applications.user.models import User, Role, ActivityActionType, UserStatus, FEATURES
@@ -216,9 +217,14 @@ async def upcoming_trainings(
 ):
     
     today = date.today()
-    qs    = Training.filter(training_date__gte=today)
-    total = await qs.count()
-    items = await qs.order_by("training_date").offset((page - 1) * page_size).limit(page_size)
+    qs = Training.filter(training_date__gte=today)
+    if not current_user.is_superuser:
+        qs = qs.filter(
+            role_permissions__role=current_user.role,
+            role_permissions__can_read=True,
+        )
+    total = await qs.distinct().count()
+    items = await qs.distinct().order_by("training_date").offset((page - 1) * page_size).limit(page_size)
     return {
         "total":   total,
         "page":    page,
@@ -233,9 +239,14 @@ async def past_trainings(
     current_user: User = Depends(permission_required(FEATURES.TRAINING, "view")),
 ):
     today = date.today()
-    qs    = Training.filter(training_date__lt=today)
-    total = await qs.count()
-    items = await qs.order_by("-training_date").offset((page - 1) * page_size).limit(page_size)
+    qs = Training.filter(training_date__lt=today)
+    if not current_user.is_superuser:
+        qs = qs.filter(
+            role_permissions__role=current_user.role,
+            role_permissions__can_read=True,
+        )
+    total = await qs.distinct().count()
+    items = await qs.distinct().order_by("-training_date").offset((page - 1) * page_size).limit(page_size)
     return {
         "total":   total,
         "page":    page,
@@ -248,11 +259,13 @@ async def trainings_dashboard_widget(
     current_user: User = Depends(permission_required(FEATURES.TRAINING, "view")),
 ):
     today = date.today()
-    items = (
-        await Training.filter(training_date__gte=today)
-        .order_by("training_date")
-        .limit(4)
-    )
+    qs = Training.filter(training_date__gte=today)
+    if not current_user.is_superuser:
+        qs = qs.filter(
+            role_permissions__role=current_user.role,
+            role_permissions__can_read=True,
+        )
+    items = await qs.distinct().order_by("training_date").limit(4)
     return [await _serialize_training(t, current_user) for t in items]
 
 
@@ -262,9 +275,14 @@ async def list_trainings(
     current_user: User                  = Depends(permission_required(FEATURES.TRAINING, "view"))
 ):
     qs = Training.filter()
+    if not current_user.is_superuser:
+        qs = qs.filter(
+            role_permissions__role=current_user.role,
+            role_permissions__can_read=True,
+        )
     if status:
         qs = qs.filter(status=status)
-    items = await qs.order_by("training_date")
+    items = await qs.distinct().order_by("training_date")
     return [await _serialize_training(t, current_user) for t in items]
 
 
@@ -277,6 +295,7 @@ async def get_training(
     training = await Training.get_or_none(id=training_id)
     if not training:
         raise HTTPException(status_code=404, detail="Training not found.")
+    await check_training_access(training, current_user)
     return await _serialize_training(training, current_user)
 
 
@@ -384,6 +403,7 @@ async def update_training(
     training = await Training.get_or_none(id=training_id)
     if not training:
         raise HTTPException(status_code=404, detail="Training not found.")
+    await check_training_access(training, current_user, need_write=True)
 
     # --- scalar fields (only update what was provided) ---
     if title is not None:
@@ -481,6 +501,7 @@ async def delete_training(
     training = await Training.get_or_none(id=training_id)
     if not training:
         raise HTTPException(status_code=404, detail="Training not found.")
+    await check_training_access(training, current_user, need_write=True)
     await training.delete()
 
 
@@ -496,6 +517,7 @@ async def register_for_training(
     training = await Training.get_or_none(id=training_id)
     if not training:
         raise HTTPException(status_code=404, detail="Training not found.")
+    await check_training_access(training, current_user)
 
     # Treat past trainings as completed even if DB hasn't been updated yet
     if training.training_date and training.training_date < date.today():
@@ -531,13 +553,17 @@ async def unregister_from_training(
     current_user: User = Depends(permission_required(FEATURES.TRAINING, "view"))
 ):
     
+    training = await Training.get_or_none(id=training_id)
+    if not training:
+        raise HTTPException(status_code=404, detail="Training not found.")
+    await check_training_access(training, current_user)
+
     reg = await TrainingRegistration.get_or_none(training_id=training_id, user=current_user)
     if not reg:
         raise HTTPException(status_code=404, detail="Registration not found.")
     await reg.delete()
 
     # Re-open if was full — a spot just became available
-    training = await Training.get(id=training_id)
     if training.status == TrainingStatus.FULL:
         training.status = TrainingStatus.OPEN
         await training.save(update_fields=["status"])
@@ -594,11 +620,11 @@ class BulkTrainingPermissionRequest(BaseModel):
 
 
 @router.patch("/training/permissions/bulk", tags=["Training"])
-async def set_forum_permissions_bulk(
+async def set_training_permissions_bulk(
     body:         BulkTrainingPermissionRequest,
     current_user: User = Depends(superuser_required)
 ):
-    # 1. Validate all forum IDs exist in ONE query
+    # 1. Validate all training IDs exist in ONE query
     found_trainings = await Training.filter(id__in=body.training_id).only("id")
     found_ids    = {f.id for f in found_trainings}
 
@@ -606,10 +632,10 @@ async def set_forum_permissions_bulk(
     if missing:
         raise HTTPException(
             status_code=404,
-            detail=f"Forums not found or inactive: {[str(m) for m in missing]}",
+            detail=f"Trainings not found or inactive: {[str(m) for m in missing]}",
         )
 
-    # 2. Expand (forum_id x role) combinations
+    # 2. Expand (training_id x role) combinations
     records = [
         TrainingRolePermission(
             training_id = training_id,
@@ -636,13 +662,13 @@ async def set_forum_permissions_bulk(
     return {"updated": len(records), "permissions": result}
 
 
-@router.get("/forums/{training_id}/permissions", tags=["Training"])
-async def get_forum_permissions(
+@router.get("/trainings/{training_id}/permissions", tags=["Training"])
+async def get_training_permissions(
     training_id: uuid.UUID,
     current_user: User = Depends(superuser_required)
 ):
     training = await Training.get_or_none(id=training_id)
     if not training:
-        raise HTTPException(status_code=404, detail="Forum not found.")
+        raise HTTPException(status_code=404, detail="Training not found.")
     perms = await TrainingRolePermission.filter(training=training).all().prefetch_related("role", "training")
     return [_serialize_training_permission(p) for p in perms]

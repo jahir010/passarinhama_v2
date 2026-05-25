@@ -117,7 +117,6 @@ async def global_search(
                 .limit(limit)
                 .values(
                     "id", "title", "created_at",
-                    # reply_count and view_count shown on forum cards in the homepage
                     "reply_count", "view_count",
                     forum_name="forum__name",
                     forum_id="forum_id",
@@ -130,7 +129,7 @@ async def global_search(
         results["topics"] = topics
 
     # ── 3. Events ──────────────────────────────────────────────────────────
-    # FIX: added event_time — homepage agenda cards display "test from 9:45 @ Zoom"
+    
     if permission_required(FEATURES.EVENT, "view")(current_user):
         event_qs = Event.filter(
             Q(title__icontains=q) | Q(description__icontains=q) | Q(location__icontains=q)
@@ -144,7 +143,7 @@ async def global_search(
             .limit(limit)
             .values(
                 "id", "title", "event_type",
-                "event_date", "event_time",   # event_time was missing in v1
+                "event_date", "event_time",   
                 "location", "is_public",
             )
         )

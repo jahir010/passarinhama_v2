@@ -8,7 +8,7 @@ from pydantic import BaseModel, field_validator
 import uuid
 from datetime import datetime, date, time, timezone as UTC
 
-from app.auth import login_required, role_required, superuser_required, permission_required
+from app.auth import login_required, permission_required
 from app.token import get_current_user
 from app.utils.file_manager import delete_file, save_file
 from app.utils.helper_functions import log_activity
@@ -37,8 +37,7 @@ class EventCreate(BaseModel):
     max_attendees: int | None      = None
     is_public:     bool            = False
 
-    # FIX: validate and coerce strings → proper Python types at schema level
-    # so the ORM always receives the correct type, not a raw string.
+
     @field_validator("event_date")
     @classmethod
     def parse_event_date(cls, v: str) -> date:
@@ -195,10 +194,6 @@ async def _notify_new_event(event_id: uuid.UUID, event_title: str) -> None:
     )
 
 def _format_event_time(t) -> str | None:
-    """
-    Tortoise ORM + PostgreSQL returns TimeField values as timedelta, not time.
-    This helper handles both types safely and always returns "HH:MM" or None.
-    """
     if t is None:
         return None
     from datetime import timedelta
@@ -239,7 +234,7 @@ async def _serialize_event(event: Event, current_user: User | None = None) -> di
         "event_type":     event.event_type,
         "event_date":     event.event_date.isoformat(),
         "end_date":       event.end_date.isoformat() if event.end_date else None,
-        # day/month split — needed by dashboard widget (§5.3)
+        # day/month split — needed by dashboard widget 
         "day":            event.event_date.day,
         "month":          event.event_date.strftime("%b"),   # "May", "Jun" …
         "event_time":     _format_event_time(event.event_time),
@@ -263,22 +258,13 @@ async def _serialize_event(event: Event, current_user: User | None = None) -> di
 
 # ══════════════════════════════════════════════════════════════════════════════
 # EVENTS
-# IMPORTANT: fixed-path routes (/upcoming, /calendar-stats) MUST be declared
-# before parameterised routes (/{event_id}) — otherwise FastAPI matches
-# "upcoming" as a UUID string and returns 422.
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/events/upcoming", tags=["Events"])
 async def upcoming_events(
     limit:        int  = Query(6, ge=1, le=20),
-    current_user: User = Depends(permission_required(FEATURES.EVENT, "view")),        # FIX: requires login per spec §5
+    current_user: User = Depends(permission_required(FEATURES.EVENT, "view")),        
 ):
-    """
-    Next N upcoming events for the dashboard widget (§5.3).
-    Returns day, month, title, location, event_type — exactly what the widget needs.
-    Default limit=6 per spec §5.3.
-    Spec ref: §5.3
-    """
     today  = date.today()
     events = (
         await Event.filter(event_date__gte=today)
@@ -294,7 +280,6 @@ async def calendar_stats(
 ):
     """
     Stats for the dashboard stat card: total events scheduled this year.
-    Spec ref: §5.1 ('Events scheduled this year')
     """
     today      = date.today()
     year_start = date(today.year, 1, 1)
@@ -312,19 +297,6 @@ async def list_events(
     event_type:   EventType | None = None,
     current_user: User | None      = Depends(permission_required(FEATURES.EVENT, "view")),
 ):
-    """
-    Full event list with optional year/month/type filters.
-    Used by the monthly calendar grid (§9.2) and the list view.
-
-    - Unauthenticated → only is_public=True events (homepage preview)
-    - Authenticated   → all events
-    - Filters: ?year=2026&month=5&event_type=training
-
-    Response includes attendee_count and is_registered per event
-    so the UI can render capacity bars and Register buttons without
-    extra requests.
-    Spec ref: §9.1, §9.2
-    """
     qs = Event.filter()
 
     if not current_user:
@@ -412,7 +384,6 @@ async def create_event(
     )
     await log_activity(current_user, ActivityActionType.EVENT_CREATED, "event", event.id, event.title)
 
-    # FIX: filter by notification preference, not all active users
     # NotificationPreference stores per-user per-type opt-in/out
     prefs = await NotificationPreference.filter(
         notification_type=NotificationType.NEW_EVENT,

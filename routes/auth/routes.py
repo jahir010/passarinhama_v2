@@ -151,16 +151,6 @@ async def login(
     password:  str           = Form(...),
     otp_value: Optional[str] = Form(None),
 ):
-    """
-    Full login endpoint with optional 2FA / OTP gate.
-
-    Flow:
-      1. Validate credentials.
-      2. If 2FA is enabled and no OTP supplied → generate & send OTP,
-         return otp_required so the client can prompt for the code.
-      3. If OTP is supplied → verify it, then issue tokens.
-      4. If 2FA is disabled → issue tokens immediately.
-    """
     email = _normalize_email(email)
     await detect_input_type(email)
 
@@ -204,13 +194,6 @@ async def refresh_token_endpoint(
     response:      Response,
     refresh_token: Optional[str] = Form(None),
 ):
-    """
-    Issues a new access + refresh token pair from a valid, non-blocklisted
-    refresh token.  The consumed refresh token is immediately blocklisted
-    (rotation), so replay attacks are detected.
-
-    Accepts the token via form body OR the HTTP-only cookie.
-    """
     from jose import jwt, JWTError, ExpiredSignatureError
     from tortoise.exceptions import DoesNotExist
 
@@ -327,16 +310,6 @@ async def signup(
     password:   str = Form(...),
     otp_value:  str = Form(...),
 ):
-    """
-    Self-service registration.
-
-    Flow: verify OTP → create user with PENDING status → issue tokens.
-    The account stays PENDING until an admin validates payment, at which
-    point status is promoted to ACTIVE.
-
-    Role is intentionally NOT accepted from the client on signup — admins
-    assign roles via the PATCH /users/{id} endpoint.
-    """
     email      = _normalize_email(email)
     await detect_input_type(email)
     first_name = first_name.strip()
@@ -438,12 +411,6 @@ async def forgot_password(
     new_password: str = Form(...),
     session_key:  str = Form(...),
 ):
-    """
-    Reset password without being logged in.
-
-    Requires a session_key obtained from POST /verify_otp with
-    purpose=forgot_password.
-    """
     email        = _normalize_email(email)
     await detect_input_type(email)
     new_password = new_password.strip()
@@ -478,12 +445,6 @@ async def verify_token(
     request: Request,
     user:    User = Depends(get_current_user),
 ):
-    """
-    Confirm a token is valid and return the user's public profile.
-
-    When the access token was silently rotated via a refresh token, the new
-    token pair is returned under `new_tokens` so the client can store them.
-    """
     response_data = {
         "id":           str(user.id),
         "email":        user.email,

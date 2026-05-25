@@ -27,10 +27,6 @@ class TrainingStatus(str, Enum):
 # ─────────────────────────────────────────
  
 class Training(models.Model):
-    """
-    Training session — separate from Event.
-    Has its own lifecycle: open → full → completed.
-    """
     id              = fields.UUIDField(pk=True, default=uuid.uuid4)
     title           = fields.CharField(max_length=300)
     description     = fields.TextField(null=True)

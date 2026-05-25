@@ -1,15 +1,13 @@
 
 import ast
 from typing import List, Optional
-
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status, Query, BackgroundTasks
-from tortoise.transactions import in_transaction
 from tortoise.expressions import Q
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel
 import uuid
 from datetime import datetime, timezone as UTC
 
-from app.auth import login_required, role_required, superuser_required, permission_required
+from app.auth import permission_required
 from app.token import get_current_user
 from app.utils.file_manager import delete_file, update_file, save_file
 from applications.articles.models import Article, ArticleCategory, ArticleStatus
@@ -55,15 +53,7 @@ class ArticleOut(BaseModel):
 
 
 async def _notify_new_article(article_id: uuid.UUID, article_title: str) -> None:
-    """
-    Background task: send NEW_ARTICLE emails only to users who:
-      - are active, payment-validated, and not deleted
-      - have NOT opted out of NEW_ARTICLE notifications
- 
-    Sends in chunks of 50 to stay within SMTP rate limits, then writes
-    a single-batch audit log so the NotificationLog table stays accurate.
-    """
-    # 1. Resolve opted-in user IDs (excludes explicit opt-outs)
+
     opted_in_ids = await NotificationPreference.opted_in_user_ids(
         NotificationType.NEW_ARTICLE
     )
@@ -168,10 +158,6 @@ async def list_articles(
     page_size:   int = Query(20, ge=1, le=100),
     current_user: User | None = Depends(permission_required(FEATURES.ARTICLE, "view"))
 ):
-    """
-    List articles. Unauthenticated → published only.
-    Admin/Moderator → all statuses.
-    """
     qs = Article.filter()
  
     
@@ -251,8 +237,6 @@ async def list_my_articles(
     page_size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(permission_required(FEATURES.ARTICLE, "view"))
 ):
-    """List articles authored by the current user. Optional status filter.
-    """
     if author_id:
         qs = Article.filter(author_id=author_id)
     else:
@@ -275,15 +259,6 @@ async def get_article(article_id: uuid.UUID, current_user: User | None = Depends
     return await _article_serialize(article)
  
  
-# @router.patch("/articles/{article_id}", tags=["Articles"])
-# async def update_article(article_id: uuid.UUID, body: ArticleUpdate, current_user: User = Depends(role_required(UserRole.ADMIN, UserRole.MODERATOR))):
-#     article = await Article.get_or_none(id=article_id)
-#     if not article:
-#         raise HTTPException(status_code=404, detail="Article not found.")
-#     for field, value in body.model_dump(exclude_none=True).items():
-#         setattr(article, field, value)
-#     await article.save()
-#     return article
 
 
 

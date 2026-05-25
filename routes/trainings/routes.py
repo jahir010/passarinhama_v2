@@ -6,7 +6,7 @@ from datetime import date, datetime
 import json
 import ast
 
-from app.auth import login_required, role_required, permission_required, superuser_required
+from app.auth import permission_required, superuser_required
 from app.token import get_current_user
 from app.utils.helper_functions import log_activity
 from app.utils.file_manager import save_file, delete_file, update_file
@@ -32,9 +32,6 @@ class TrainingCreate(BaseModel):
     duration_hours: int | None         = None
     max_attendees:  int | None         = None
 
-    # FIX: coerce string → date at schema level so Tortoise always
-    # receives a proper date object, not a raw string (same root cause
-    # as the events timedelta crash we fixed earlier).
     @field_validator("training_date")
     @classmethod
     def parse_training_date(cls, v: str | None) -> date | None:
@@ -54,7 +51,7 @@ class TrainingUpdate(BaseModel):
     training_date:  str | None         = None
     duration_hours: int | None         = None
     max_attendees:  int | None         = None
-    status:         TrainingStatus | None = None   # admin can manually mark completed
+    status:         TrainingStatus | None = None   
 
     @field_validator("training_date")
     @classmethod
@@ -75,14 +72,7 @@ class TrainingUpdate(BaseModel):
 
 
 async def _notify_new_training(training_id: uuid.UUID, training_title: str) -> None:
-    """
-    Background task: send NEW_TRAINING emails only to users who:
-      - are active, payment-validated, and not deleted
-      - have NOT opted out of NEW_TRAINING notifications
- 
-    Sends in chunks of 50 to stay within SMTP rate limits, then writes
-    a single-batch audit log so the NotificationLog table stays accurate.
-    """
+    
     # 1. Resolve opted-in user IDs (excludes explicit opt-outs)
     opted_in_ids = await NotificationPreference.opted_in_user_ids(
         NotificationType.NEW_TRAINING
@@ -152,14 +142,7 @@ async def _notify_new_training(training_id: uuid.UUID, training_title: str) -> N
     )
 
 async def _serialize_training(training: Training, current_user: User | None = None) -> dict:
-    """
-    Build the response dict every UI card needs:
-      - attendee_count   → shown on past training cards (spec §10.3)
-      - spots_left       → available spots indicator (spec §5.6 dashboard widget)
-      - is_registered    → drives Register / Unregister button state
-      - is_at_capacity   → UI disables Register button
-      - status           → auto-corrected for past dates (see note below)
-    """
+    
     attendee_count = await TrainingRegistration.filter(training=training).count()
 
     is_registered = False
@@ -172,9 +155,7 @@ async def _serialize_training(training: Training, current_user: User | None = No
     if training.max_attendees is not None:
         spots_left = max(0, training.max_attendees - attendee_count)
 
-    # FIX: COMPLETED is never set in DB automatically (no cron job yet).
-    # Derive it at read time: if training_date is in the past and status
-    # is still OPEN/FULL, report it as completed so the UI is always correct.
+   
     effective_status = training.status
     if (
         training.training_date
@@ -225,9 +206,6 @@ def _serialize_training_permission(perm: TrainingRolePermission) -> dict:
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TRAININGS
-# Fixed-path routes (/upcoming, /dashboard-widget) MUST come before
-# parameterised routes (/{training_id}) to avoid FastAPI matching
-# "upcoming" as a UUID and returning 422.
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/trainings/upcoming", tags=["Trainings"])
@@ -236,10 +214,7 @@ async def upcoming_trainings(
     page_size:    int  = Query(20, ge=1, le=100),
     current_user: User = Depends(permission_required(FEATURES.TRAINING, "view"))
 ):
-    """
-    Upcoming trainings grid — training_date >= today, ordered chronologically.
-    Spec ref: §10.3 'Upcoming trainings grid (4 columns)'
-    """
+    
     today = date.today()
     qs    = Training.filter(training_date__gte=today)
     total = await qs.count()
@@ -257,11 +232,6 @@ async def past_trainings(
     page_size:    int  = Query(20, ge=1, le=100),
     current_user: User = Depends(permission_required(FEATURES.TRAINING, "view")),
 ):
-    """
-    Past trainings grid — training_date < today, reverse chronological.
-    Always includes attendee_count (spec §10.3: 'Past trainings show attendee count').
-    Spec ref: §10.3
-    """
     today = date.today()
     qs    = Training.filter(training_date__lt=today)
     total = await qs.count()
@@ -277,12 +247,6 @@ async def past_trainings(
 async def trainings_dashboard_widget(
     current_user: User = Depends(permission_required(FEATURES.TRAINING, "view")),
 ):
-    """
-    Next 4 upcoming trainings for the dashboard widget.
-    Returns spots_left for the 'available spots indicator'.
-    Spec ref: §5.6 'Monthly trainings widget — Next 4 upcoming trainings
-              with available spots indicator'
-    """
     today = date.today()
     items = (
         await Training.filter(training_date__gte=today)
@@ -297,11 +261,6 @@ async def list_trainings(
     status:       TrainingStatus | None = None,
     current_user: User                  = Depends(permission_required(FEATURES.TRAINING, "view"))
 ):
-    """
-    Full training list with optional status filter.
-    Used by admin panel and any future filter UI.
-    Spec ref: §10.1
-    """
     qs = Training.filter()
     if status:
         qs = qs.filter(status=status)
@@ -314,10 +273,7 @@ async def get_training(
     training_id:  uuid.UUID,
     current_user: User = Depends(permission_required(FEATURES.TRAINING, "view"))
 ):
-    """
-    Single training detail — needed when user clicks a training card.
-    Spec ref: §10.1, §10.2
-    """
+   
     training = await Training.get_or_none(id=training_id)
     if not training:
         raise HTTPException(status_code=404, detail="Training not found.")
@@ -339,16 +295,7 @@ async def create_training(
     thumbnail:        Optional[UploadFile] = File(None),
     attachments:      List[UploadFile]  = File(default=[]),
 ):
-    """
-    Create a new training (admin only).
-    Accepts multipart/form-data so attachments (files) can be uploaded together
-    with the training fields in a single request.
-
-    FIX 1: training_date string is coerced to a date object before hitting Tortoise.
-    FIX 2: Notification only goes to users with new_training preference ON.
-            Spec §14.1: 'All users with new_training preference = ON'.
-    Spec ref: §10.1, §14.1
-    """
+    
     # Coerce and validate date
     parsed_date: Optional[date] = None
     parsed_end_date: Optional[date] = None
@@ -433,16 +380,7 @@ async def update_training(
     new_attachments:       Optional[List[UploadFile]] = File(default=None),
     remove_attachment_urls: Optional[str]       = Form(None),   # JSON array of URLs to remove
 ):
-    """
-    Partial update of a training (admin only).
-    Accepts multipart/form-data.
-
-    - new_attachments: upload additional files to append to existing attachments.
-    - remove_attachment_urls: JSON-encoded list of existing attachment URLs to delete,
-      e.g. '["https://…/file1.pdf", "https://…/file2.png"]'.
-    - Admin can also manually set status=completed.
-    Spec ref: §10.1
-    """
+    
     training = await Training.get_or_none(id=training_id)
     if not training:
         raise HTTPException(status_code=404, detail="Training not found.")
@@ -539,7 +477,7 @@ async def delete_training(
     training_id:  uuid.UUID,
     current_user: User = Depends(permission_required(FEATURES.TRAINING, "delete"))
 ):
-    """Delete a training (admin only). Cascades to TrainingRegistration rows."""
+   
     training = await Training.get_or_none(id=training_id)
     if not training:
         raise HTTPException(status_code=404, detail="Training not found.")
@@ -554,12 +492,7 @@ async def register_for_training(
     background_tasks: BackgroundTasks,
     current_user:     User = Depends(permission_required(FEATURES.TRAINING, "view"))
 ):
-    """
-    Register the current user for a training.
-    - Rejects if status is not OPEN (full or completed).
-    - Auto-flips status to FULL when capacity is reached (atomic count check).
-    Spec ref: §10.2
-    """
+    
     training = await Training.get_or_none(id=training_id)
     if not training:
         raise HTTPException(status_code=404, detail="Training not found.")
@@ -597,11 +530,7 @@ async def unregister_from_training(
     training_id:  uuid.UUID,
     current_user: User = Depends(permission_required(FEATURES.TRAINING, "view"))
 ):
-    """
-    Cancel registration for a training.
-    Re-opens the training if it was FULL (someone dropped out, spot is free again).
-    Spec ref: §10.2
-    """
+    
     reg = await TrainingRegistration.get_or_none(training_id=training_id, user=current_user)
     if not reg:
         raise HTTPException(status_code=404, detail="Registration not found.")
@@ -619,11 +548,7 @@ async def list_training_registrations(
     training_id:  uuid.UUID,
     current_user: User = Depends(superuser_required)
 ):
-    """
-    List all registrations for a training (admin only).
-    Used in the admin panel to see who signed up.
-    Spec ref: §10.2, §10.3 (past trainings show attendee count)
-    """
+    
     training = await Training.get_or_none(id=training_id)
     if not training:
         raise HTTPException(status_code=404, detail="Training not found.")
@@ -716,10 +641,6 @@ async def get_forum_permissions(
     training_id: uuid.UUID,
     current_user: User = Depends(superuser_required)
 ):
-    """
-    Get the read/post permissions for all roles on a forum (admin only).
-    Spec ref: §15.5
-    """
     training = await Training.get_or_none(id=training_id)
     if not training:
         raise HTTPException(status_code=404, detail="Forum not found.")

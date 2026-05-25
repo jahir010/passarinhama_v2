@@ -6,9 +6,8 @@ import os
 import mimetypes
 
 from app.auth import role_required, superuser_required, permission_required
-from app.token import get_current_user
 from app.utils.helper_functions import log_activity, check_folder_access
-from app.utils.file_manager import save_file, delete_file   # your existing save_file helper
+from app.utils.file_manager import save_file, delete_file   
 
 from applications.user.models import User, Role, ActivityActionType, FEATURES
 from applications.documents.models import DocumentFolder, DocumentFolderPermission, Document, FileType
@@ -28,13 +27,11 @@ class FolderCreate(BaseModel):
 
 
 class FolderUpdate(BaseModel):
-    """Admin can rename a folder or change its color."""
     name:       str | None = None
     color_code: str | None = None
 
 
 class DocumentUpdate(BaseModel):
-    """Admin/uploader can rename the display name of a document."""
     original_name: str
 
 
@@ -84,12 +81,6 @@ def _serialize_folder(folder: DocumentFolder, can_upload: bool = False, children
 
 
 def _serialize_document(doc: Document, uploader) -> dict:
-    """
-    Document response the file list UI needs:
-      - file_size_kb    → human-readable size display
-      - uploader name   → "uploaded by X"
-    Note: storage_path is intentionally NEVER returned (spec §12.3).
-    """
     size_kb = round(doc.file_size / 1024, 1)
     size_display = f"{size_kb} KB" if size_kb < 1024 else f"{round(size_kb / 1024, 1)} MB"
 
@@ -130,7 +121,6 @@ async def _get_folder_depth(folder_id: uuid.UUID) -> int:
     """
     Walk up the parent chain and count levels.
     Root folders return depth=1; their children depth=2; grandchildren depth=3.
-    Spec §12.1: max nesting depth = 3.
     """
     depth = 1
     current_id = folder_id
@@ -332,7 +322,6 @@ async def upload_document(
     file_size  = len(content)
     await file.seek(0)
 
-    # Save using your existing save_file helper — returns the stored URL/path
     storage_path = await save_file(file, upload_to="documents")
 
     doc = await Document.create(
@@ -404,7 +393,7 @@ async def delete_document(
 
     await doc.delete()
 
-    # Remove the actual file from local storage via your delete_file helper
+    # Remove the actual file from local storage 
     await delete_file(storage_path)
 
     # Atomic decrement — no race condition, no negative values
@@ -412,7 +401,7 @@ async def delete_document(
         document_count=F("document_count") - 1
     )
 
-    # FIX: activity log on delete was missing
+    
     await log_activity(
         current_user, ActivityActionType.DOCUMENT_DELETED, "document", document_id, original_name
     )

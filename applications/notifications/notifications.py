@@ -20,11 +20,6 @@ class NotificationType(str, Enum):
 # ─────────────────────────────────────────────────────────────
 
 class NotificationPreference(models.Model):
-    """
-    Per-user, per-type email opt-in/out.
-    One row per (user, notification_type, forum) triple.
-    forum=None means the preference applies platform-wide.
-    """
     id                = fields.UUIDField(pk=True, default=uuid.uuid4)
     user              = fields.ForeignKeyField(
         "models.User", related_name="notification_preferences", on_delete=fields.CASCADE
@@ -78,22 +73,6 @@ class NotificationPreference(models.Model):
         cls,
         notification_type: NotificationType
     ) -> List:
-        """
-        Return the list of user PKs that have NOT opted out of
-        `notification_type`.  Users with no preference row are treated
-        as opted-in (opt-out model).
-
-        Usage in a bulk-send flow:
-            user_ids = await NotificationPreference.opted_in_user_ids(
-                NotificationType.NEW_ARTICLE
-            )
-            users = await User.filter(
-                id__in=user_ids,
-                status=UserStatus.ACTIVE,
-                is_payment_validated=True,
-                is_deleted=False,
-            ).values_list("email", flat=True)
-        """
         opted_out = set(
             await cls.filter(
                 notification_type=notification_type,

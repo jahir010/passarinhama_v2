@@ -71,7 +71,6 @@ async def _notify_new_post(post_id: uuid.UUID, post_title: str) -> None:
     Sends in chunks of 50 to stay within SMTP rate limits, then writes
     a single-batch audit log so the NotificationLog table stays accurate.
     """
-    # 1. Resolve opted-in user IDs (excludes explicit opt-outs)
     opted_in_ids = await NotificationPreference.opted_in_user_ids(
         NotificationType.NEW_POST
     )
@@ -168,21 +167,7 @@ def _serialize_permission(perm: ForumRolePermission) -> dict:
 
 @router.get("/forums", tags=["Forums"])
 async def list_forums(current_user: User = Depends(permission_required(FEATURES.FORUM, "view"))):
-    """
-    Return all forums the current user has at least read access to,
-    with stats needed by the forum list UI (topic count, last activity).
-
-    Response shape:
-      [
-        {
-          "id", "name", "slug", "description", "forum_type",
-          "topic_count": int,
-          "last_activity_at": datetime | null,
-          "can_post": bool          ← so UI can hide the 'New Topic' button
-        }, ...
-      ]
-    Spec ref: §3.2 Forum Access Matrix, §7.1
-    """
+    
     if current_user.is_superuser:
         forums = await Forum.all().prefetch_related("role_permissions")  # superusers see all forums
         result = []
@@ -237,13 +222,6 @@ async def create_forum(
     forum_type:  str = "general",
     current_user: User = Depends(permission_required(FEATURES.FORUM, "create")),
 ):
-    """
-    Create a new forum (admin only).
-
-    FIX: slug is now sanitised — special characters are stripped so the
-    unique constraint is never violated by names like 'Board & Bureau'.
-    Spec ref: §7.1, §15.5
-    """
     slug = _slugify(name)
 
     # Guarantee uniqueness — append a counter if slug already exists
@@ -271,11 +249,6 @@ async def get_forum(
     forum_id: uuid.UUID,
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Return a single forum with its permission details.
-    403 if the user's role lacks read access.
-    Spec ref: §7.1
-    """
     forum = await Forum.get_or_none(id=forum_id)
     if not forum:
         raise HTTPException(status_code=404, detail="Forum not found.")
@@ -292,10 +265,6 @@ async def update_forum(
     forum_type: str | None = None,
     current_user: User = Depends(permission_required(FEATURES.FORUM, "edit")),
 ):
-    """
-    Update a forum's details (admin only).
-    Spec ref: §7.1, §15.5
-    """
     forum = await Forum.get_or_none(id=forum_id)
     if not forum:
         raise HTTPException(status_code=404, detail="Forum not found.")
@@ -322,10 +291,6 @@ async def delete_forum(
     forum_id: uuid.UUID,
     current_user: User = Depends(permission_required(FEATURES.FORUM, "delete")),
 ):
-    """
-    Delete a forum and all its topics/posts (admin only).
-    Spec ref: §7.1, §15.5
-    """
     forum = await Forum.get_or_none(id=forum_id)
     if not forum:
         raise HTTPException(status_code=404, detail="Forum not found.")
@@ -342,11 +307,6 @@ async def set_forum_permission(
     can_post: bool,
     current_user: User = Depends(superuser_required),
 ):
-    """
-    Set or update read/post access for a given role on a forum (admin only).
-    Uses get_or_create so calling this endpoint is idempotent.
-    Spec ref: §15.5
-    """
     forum = await Forum.get_or_none(id=forum_id)
     if not forum:
         raise HTTPException(status_code=404, detail="Forum not found.")
@@ -365,10 +325,6 @@ async def get_forum_permissions(
     forum_id: uuid.UUID,
     current_user: User = Depends(superuser_required),
 ):
-    """
-    Get the read/post permissions for all roles on a forum (admin only).
-    Spec ref: §15.5
-    """
     forum = await Forum.get_or_none(id=forum_id)
     if not forum:
         raise HTTPException(status_code=404, detail="Forum not found.")
@@ -387,26 +343,6 @@ async def list_topics(
     page_size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Paginated list of topics in a forum.
-
-    FIX: pinned topics are sorted to the top, then by last_activity_at desc,
-    matching the spec (§7.2) and the UI expectation.
-
-    Response shape:
-      {
-        "total": int,
-        "page":  int,
-        "results": [
-          {
-            "id", "title", "is_pinned", "is_locked",
-            "view_count", "reply_count", "last_activity_at", "created_at",
-            "author": { "id", "first_name", "last_name" }
-          }, ...
-        ]
-      }
-    Spec ref: §7.2
-    """
     forum = await Forum.get_or_none(id=forum_id)
     if not forum:
         raise HTTPException(status_code=404, detail="Forum not found.")
@@ -481,7 +417,7 @@ async def pinned_topic_list(
         perm = await ForumRolePermission.get_or_none(
             forum=forum,
             role=current_user.role,
-            can_read=True,  # ✅ Only include topics the user can actually read
+            can_read=True,  # Only include topics the user can actually read
         )
         if not perm and not current_user.is_superuser:
             continue
@@ -499,7 +435,7 @@ async def pinned_topic_list(
             "created_at":       topic.created_at,
             "author": {
                 "id":         str(topic.author_id),
-                "first_name": topic.author.first_name,  # ✅ Direct access, already prefetched
+                "first_name": topic.author.first_name,  # irect access, already prefetched
                 "last_name":  topic.author.last_name,
             },
             "forum": {
@@ -509,7 +445,7 @@ async def pinned_topic_list(
             },
         })
 
-    return result  # ✅ Always return the list, even if empty
+    return result  # Always return the list, even if empty
 
 
 @router.get("/topics/{topic_id}", tags=["Forums"])
@@ -517,21 +453,6 @@ async def get_topic(
     topic_id: uuid.UUID,
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Return a single topic's metadata before loading its posts.
-    The UI needs this to render the topic header (title, lock status,
-    author, breadcrumb forum name) before the post list loads.
-
-    Response shape:
-      {
-        "id", "title", "is_pinned", "is_locked",
-        "view_count", "reply_count",
-        "last_activity_at", "created_at",
-        "author": { "id", "first_name", "last_name" },
-        "forum":  { "id", "name", "slug" }
-      }
-    Spec ref: §7.2
-    """
     topic = await Topic.get_or_none(id=topic_id).prefetch_related("author")
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found.")
@@ -571,11 +492,6 @@ async def pin_topic(
     pinned:    bool = True,
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Pin or unpin a topic (admin/moderator only).
-    Pass ?pinned=false to unpin.
-    Spec ref: §7.2 (is_pinned field), §15.5
-    """
     topic = await Topic.get_or_none(id=topic_id)
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found.")
@@ -590,55 +506,12 @@ async def lock_topic(
     locked:   bool = True,
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Lock or unlock a topic (admin/moderator only).
-    Locked topics reject new posts with 403.
-    Pass ?locked=false to reopen.
-    Spec ref: §7.2 (is_locked field)
-    """
     topic = await Topic.get_or_none(id=topic_id)
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found.")
     topic.is_locked = locked
     await topic.save()
     return {"id": str(topic.id), "is_locked": topic.is_locked}
-
-
-# @router.patch("/topics/{topic_id}/update", tags=["Forums"])
-# async def update_topic(
-#     topic_id: uuid.UUID,
-#     title: str = Form(None),
-#     content: str = Form(None),
-#     files:   Optional[list[UploadFile]] = File(None),
-#     current_user: User = Depends(get_current_user),
-# ):
-#     """
-#     Update a topic's title (author only).
-#     Spec ref: §7.2
-#     """
-#     topic = await Topic.get_or_none(id=topic_id)
-#     if not topic:
-#         raise HTTPException(status_code=404, detail="Topic not found.")
-#     if topic.author_id != current_user.id and current_user.role not in (UserRole.ADMIN, UserRole.MODERATOR):
-#         raise HTTPException(status_code=403, detail="Only the topic author or moderators can update the topic.")
-#     if title is not None:
-#         topic.title = title
-#     if content is not None:
-#         topic.content = content
-#     if files:
-#         attachments = []
-#         if topic.attachment:
-#             # If there are existing attachments, we need to delete them first
-#             for att in topic.attachment:
-#                 if att:
-#                     await delete_file(att)
-#         for f in files:
-#             file_url = await save_file(file=f, upload_to="topic_attachments")
-#             attachments.append(file_url)
-#         topic.attachment = attachments if attachments else None
-#     await topic.save()
-#     await log_activity(current_user, ActivityActionType.TOPIC_UPDATED, "topic", topic.id)
-#     return topic
 
 
 
@@ -651,10 +524,7 @@ async def update_topic(
     delete_files: Optional[list[str]] = Form(default=None),
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Update a topic's title, content, or attachments (author/moderator/admin only).
-    Spec ref: §7.2
-    """
+    
     topic = await Topic.get_or_none(id=topic_id)
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found.")
@@ -702,10 +572,6 @@ async def delete_topic(
     topic_id: uuid.UUID,
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Delete a topic and all its posts (author or moderator).
-    Spec ref: §7.2
-    """
     topic = await Topic.get_or_none(id=topic_id)
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found.")
@@ -728,11 +594,6 @@ async def create_topic(
     files:   list[UploadFile] = File(None),
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Create a new topic in a forum.
-    Checks that the user's role has can_post=True on this forum.
-    Spec ref: §7.2
-    """
     forum = await Forum.get_or_none(id=forum_id)
     if not forum:
         raise HTTPException(status_code=404, detail="Forum not found.")
@@ -756,38 +617,16 @@ async def list_posts(
     page_size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Paginated list of APPROVED posts in a topic.
-    Also increments the topic view count atomically.
-
-    FIX: view_count increment now uses an F-expression to avoid
-    the read-modify-write race condition under concurrent requests.
-
-    Response shape:
-      {
-        "total": int,
-        "page":  int,
-        "results": [
-          {
-            "id", "content", "moderation_status",
-            "created_at", "updated_at",
-            "author": { "id", "first_name", "last_name" }
-          }, ...
-        ]
-      }
-    """
+    
     topic = await Topic.get_or_none(id=topic_id)
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found.")
     forum = await topic.forum
     await check_forum_access(forum, current_user)
 
-    # FIX: atomic increment — no race condition
+    
     await Topic.filter(id=topic_id).update(view_count=F("view_count") + 1)
 
-    # if current_user.role in (UserRole.ADMIN, UserRole.MODERATOR):
-    #     qs = Post.filter(topic=topic)
-    # else:
     qs    = Post.filter(topic=topic, moderation_status=ModerationStatus.APPROVED)
     total = await qs.count()
     posts = (
@@ -826,10 +665,6 @@ async def update_post(
     remove_attachment_urls: Optional[str] = Form(None),
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Update a post's content and attachments (author only).
-    Spec ref: §7.3
-    """
     post = await Post.get_or_none(id=post_id).prefetch_related("author", "topic")
     if not post:
         raise HTTPException(status_code=404, detail="Post not found.")
@@ -900,10 +735,6 @@ async def delete_post(
     post_id: uuid.UUID,
     current_user: User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Delete a post (author or moderator).
-    Spec ref: §7.3
-    """
     post = await Post.get_or_none(id=post_id).prefetch_related("author", "topic")
     if not post:
         raise HTTPException(status_code=404, detail="Post not found.")
@@ -922,15 +753,6 @@ async def create_post(
     files:            list[UploadFile] = File(None),
     current_user:     User = Depends(permission_required(FEATURES.FORUM, "view")),
 ):
-    """
-    Submit a new post to a topic.
-
-    - Admin / Moderator posts are immediately APPROVED and visible.
-    - All other roles enter PENDING moderation queue.
-    - Topic author is notified by email when a reply is approved.
-    - Locked topics reject any new post with 403.
-    Spec ref: §7.3, §14.1
-    """
     topic = await Topic.get_or_none(id=topic_id)
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found.")
@@ -995,11 +817,6 @@ async def moderation_queue(
     page_size:     int = Query(20, ge=1, le=100),
     current_user:  User = Depends(permission_required(FEATURES.FORUM, "edit")),
 ):
-    """
-    List posts awaiting moderation (pending + flagged).
-    Filterable by status. Flagged posts appear first (priority lane).
-    Spec ref: §13.1
-    """
     if filter_status == "pending":
         qs = Post.filter(moderation_status=ModerationStatus.PENDING)
     elif filter_status == "flagged":
@@ -1049,18 +866,6 @@ async def moderate_post(
     background_tasks: BackgroundTasks,
     current_user:     User = Depends(permission_required(FEATURES.FORUM, "edit")),
 ):
-    """
-    Approve / Reject / Flag / Forward a post.
-
-    FIXES:
-    1. FORWARD action is now handled — assigns moderation to another moderator.
-    2. Email notifications are enabled:
-       - Rejection always notifies the author (spec §14.1: 'always sent').
-       - Approval notifies forum subscribers.
-    3. log_activity now correctly branches for all four actions.
-
-    Spec ref: §13.2, §14.1
-    """
     post = await Post.get_or_none(id=post_id).prefetch_related("author", "topic")
     if not post:
         raise HTTPException(status_code=404, detail="Post not found.")
@@ -1072,7 +877,7 @@ async def moderate_post(
     if body.action == ModerationAction.APPROVE:
         post.moderation_status = ModerationStatus.APPROVED
         topic = await post.topic
-        # FIX: atomic reply_count increment
+        
         await Topic.filter(id=topic.id).update(
             reply_count=F("reply_count") + 1,
             last_activity_at=datetime.now(UTC.utc),
@@ -1093,18 +898,13 @@ async def moderate_post(
         post.moderation_status = ModerationStatus.REJECTED
         post.rejection_reason  = body.rejection_reason
         author = await post.author
-        # FIX: rejection notification is ALWAYS sent per spec §14.1
-        # await send_email(
-        #     author, NotificationType.POST_REJECTED, "post", post.id, background_tasks
-        # )
-        print(f"[moderation] Enqueuing rejection email to {author.email} for post {post.id}", flush=True)
         background_tasks.add_task(_notify_post_rejection, author.email)
         log_action_type = ActivityActionType.POST_REJECTED
 
     elif body.action == ModerationAction.FLAG:
         post.moderation_status = ModerationStatus.FLAGGED
         # FIX: separate log action for flag (not conflated with reject)
-        log_action_type = ActivityActionType.POST_FLAGGED   # add this to ActivityActionType enum
+        log_action_type = ActivityActionType.POST_FLAGGED   
 
     elif body.action == ModerationAction.FORWARD:
         # FIX: FORWARD was previously unhandled
@@ -1119,11 +919,10 @@ async def moderate_post(
                 status_code=400,
                 detail="forward_to must reference a valid moderator or admin user.",
             )
-        # Post stays PENDING, ownership transferred to the target moderator.
-        # assigned_moderator field (added to Post model) tracks who owns the review.
+        
         post.assigned_moderator = target_mod
         post.moderation_status  = ModerationStatus.PENDING
-        log_action_type = ActivityActionType.POST_FORWARDED  # add to ActivityActionType enum
+        log_action_type = ActivityActionType.POST_FORWARDED  
 
     await post.save()
 

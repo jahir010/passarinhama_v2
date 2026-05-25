@@ -2,21 +2,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from tortoise.expressions import F
 from pydantic import BaseModel
-import uuid
-import os
-import mimetypes
-from datetime import datetime, date, timezone as UTC
+from datetime import date, timezone as UTC
 
-from app.auth import role_required, superuser_required, permission_required
+from app.auth import superuser_required, permission_required
 from app.token import get_current_user
-from app.utils.helper_functions import log_activity, check_folder_access
-from app.utils.file_manager import save_file, delete_file
 
-from applications.user.models import ActivityLog, User, Role, ActivityActionType, UserStatus, FEATURES
+from applications.user.models import ActivityLog, User, UserStatus, FEATURES
 from applications.forums.models import Forum, ForumRolePermission, Topic, Post, ModerationStatus, ModerationLog
 from applications.events.models import Event
 from applications.trainings.models import Training, TrainingStatus, TrainingRegistration
-from applications.articles.models import Article, ArticleStatus, ArticleCategory
+from applications.articles.models import Article, ArticleStatus
 
 
 router = APIRouter()
@@ -34,15 +29,13 @@ class DashboardStats(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DASHBOARD — §5
-# One endpoint per widget so the frontend can load them in parallel.
-# All read-only — spec §5: "No writes occur from the dashboard."
+# DASHBOARD — 
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/dashboard/stats", response_model=DashboardStats, tags=["Dashboard"])
 async def dashboard_stats(current_user: User = Depends(get_current_user)):
     """
-    §5.1 — Stat cards (top row):
+    Stat cards (top row):
       - Total active members
       - Active forum topics count
       - Events scheduled this year
@@ -71,16 +64,6 @@ async def dashboard_stats(current_user: User = Depends(get_current_user)):
 
 @router.get("/dashboard/activity", tags=["Dashboard"])
 async def dashboard_activity(current_user: User = Depends(get_current_user)):
-    """
-    §5.2 — Recent activity feed:
-      Latest 10 activity log entries, newest first.
-      Each entry shows: action_type, actor, target, timestamp, status_badge.
-      Spec: "Covers new posts, published articles, new member registrations,
-             training sign-ups, moderation flags."
-
-    FIX: added order_by("-created_at") — was returning in insertion order.
-    FIX: added status_badge derived from action_type for the UI badge colour.
-    """
     logs = (
         await ActivityLog.all()
         .order_by("-created_at")
@@ -88,7 +71,6 @@ async def dashboard_activity(current_user: User = Depends(get_current_user)):
         .prefetch_related("user")
     )
 
-    # Map action types → badge style so the UI doesn't need to do it
     badge_map = {
         "post_created":        "info",
         "post_approved":       "success",
@@ -109,7 +91,7 @@ async def dashboard_activity(current_user: User = Depends(get_current_user)):
             "target_id":   str(log.target_id) if log.target_id else None,
             "description": log.description,
             "created_at":  log.created_at.isoformat(),
-            "status_badge": badge_map.get(log.action_type, "secondary"),  # FIX: missing field
+            "status_badge": badge_map.get(log.action_type, "secondary"), 
             "actor": {
                 "id":         str(log.user_id),
                 "first_name": log.user.first_name,
@@ -145,11 +127,6 @@ async def dashboard_upcoming_events(current_user: User = Depends(permission_requ
 
 @router.get("/dashboard/latest-articles", tags=["Dashboard"])
 async def dashboard_latest_articles(current_user: User = Depends(permission_required(FEATURES.ARTICLE, "view"))):
-    """
-    §5.4 — Latest articles widget:
-      4 most recently published articles with category badge and date.
-      Spec: "category badge and date"
-    """
     articles = (
         await Article.filter(status=ArticleStatus.PUBLISHED)
         .order_by("-published_at")
@@ -178,14 +155,6 @@ async def dashboard_latest_articles(current_user: User = Depends(permission_requ
 
 @router.get("/dashboard/latest-posts", tags=["Dashboard"])
 async def dashboard_latest_posts(current_user: User = Depends(permission_required(FEATURES.FORUM, "view"))):
-    """
-    §5.5 — Latest forum posts widget:
-      4 most recent APPROVED posts across all forums the current user can read.
-      Spec: "4 most recent posts across all forums the current user has access to"
-
-    This correctly respects ForumRolePermission — a user only sees posts
-    from forums their role has can_read=True on.
-    """
     # Get forums this user can read
     readable_perms = await ForumRolePermission.filter(
         role=current_user.role, can_read=True
@@ -227,11 +196,6 @@ async def dashboard_latest_posts(current_user: User = Depends(permission_require
 
 @router.get("/dashboard/upcoming-trainings", tags=["Dashboard"])
 async def dashboard_upcoming_trainings(current_user: User = Depends(permission_required(FEATURES.TRAINING, "view"))):
-    """
-    §5.6 — Monthly trainings widget:
-      Next 4 upcoming trainings with available spots indicator.
-      Spec: "available spots indicator" → spots_left computed server-side.
-    """
     today     = date.today()
     trainings = (
         await Training.filter(training_date__gte=today)
@@ -281,12 +245,6 @@ async def moderation_queue(
     page_size:   int        = Query(20, ge=1, le=100),
     current_user: User      = Depends(permission_required(FEATURES.FORUM, "edit"))
 ):
-    """
-    All pending + flagged posts for the moderation queue.
-    FIX: was returning raw ORM — now returns structured response with
-    author, topic, and forum context the moderator panel needs.
-    Spec ref: §13.1
-    """
     if filter_type == "flagged":
         qs = Post.filter(moderation_status=ModerationStatus.FLAGGED)
     elif filter_type == "pending":
@@ -339,11 +297,6 @@ async def moderation_logs(
     page_size: int = Query(20, ge=1, le=100),
     current_user: User = Depends(permission_required(FEATURES.FORUM, "edit")),
 ):
-    """
-    Full moderation audit log (admin only).
-    FIX: was returning raw ORM — now returns structured response.
-    Spec ref: §13.3
-    """
     total = await ModerationLog.all().count()
     logs  = (
         await ModerationLog.all()
@@ -385,7 +338,7 @@ async def moderation_logs(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ADMIN — ACTIVITY LOG — §15.6
+# ADMIN — ACTIVITY LOG 
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/admin/activity-log", tags=["Admin"])
@@ -426,16 +379,12 @@ async def activity_log(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PUBLIC — no auth required — §4.1
+# PUBLIC — no auth required 
 # ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/public/articles", tags=["Public"])
 async def public_articles():
-    """
-    §5.4 / §4.1 — 4 most recent published articles for the public homepage.
-    FIX: now returns structured response with category name and author.
-    Spec: "displays latest news/articles (published only)"
-    """
+    
     articles = (
         await Article.filter(status=ArticleStatus.PUBLISHED)
         .order_by("-published_at")
@@ -459,12 +408,7 @@ async def public_articles():
 
 @router.get("/public/events", tags=["Public"])
 async def public_events():
-    """
-    §4.1 — Upcoming public events for the homepage preview.
-    FIX: now returns day/month/title/location/event_type — same shape
-    as the dashboard widget so the frontend uses one component for both.
-    Spec: "upcoming events preview" on the public homepage.
-    """
+    
     today  = date.today()
     events = (
         await Event.filter(is_public=True, event_date__gte=today)

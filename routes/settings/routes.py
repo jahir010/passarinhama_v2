@@ -30,11 +30,6 @@ class NotificationPrefUpdate(BaseModel):
 async def get_notification_preferences(
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Return the current user's notification preferences.
-    If no rows exist yet (e.g. legacy accounts), seed defaults first so
-    the UI always gets a complete list rather than an empty array.
-    """
     prefs = await NotificationPreference.filter(user=current_user)
     if not prefs:
         await NotificationPreference.create_defaults(current_user.id)

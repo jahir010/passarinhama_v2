@@ -17,7 +17,6 @@ class ArticleStatus(str, Enum):
 # ─────────────────────────────────────────
  
 class ArticleCategory(models.Model):
-    """Lookup: Reform, Association, Training, Technology, Legal, Other."""
     id         = fields.UUIDField(pk=True, default=uuid.uuid4)
     name       = fields.CharField(max_length=100, unique=True)
     color_code = fields.CharField(max_length=7, default="#FFD600")  # hex
@@ -36,10 +35,6 @@ class ArticleCategory(models.Model):
 # ─────────────────────────────────────────
  
 class Article(models.Model):
-    """
-    Editorial content with ACF-style structured fields.
-    PDF attachment + YouTube embed + rich text body.
-    """
     id               = fields.UUIDField(pk=True, default=uuid.uuid4)
     title            = fields.CharField(max_length=500)
     category         = fields.ForeignKeyField("models.ArticleCategory", related_name="articles", on_delete=fields.RESTRICT)

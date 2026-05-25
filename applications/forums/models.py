@@ -25,10 +25,6 @@ class ModerationAction(str, Enum):
     FORWARD = "forward"
  
 class Forum(models.Model):
-    """
-    Forum container. Access controlled via ForumRolePermission.
-    forum_type distinguishes general / technicopro / commission / board.
-    """
     id          = fields.UUIDField(pk=True, default=uuid.uuid4)
     name        = fields.CharField(max_length=200, unique=True)
     slug        = fields.CharField(max_length=200, unique=True)
@@ -51,10 +47,6 @@ class Forum(models.Model):
 # ─────────────────────────────────────────
  
 class ForumRolePermission(models.Model):
-    """
-    Per-forum per-role access control matrix.
-    Replaces a simple is_restricted boolean — supports per-role read/write.
-    """
     id       = fields.UUIDField(pk=True, default=uuid.uuid4)
     forum    = fields.ForeignKeyField("models.Forum", related_name="role_permissions", on_delete=fields.CASCADE)
     role     = fields.ForeignKeyField("models.Role", related_name="forum_permissions", on_delete=fields.CASCADE)

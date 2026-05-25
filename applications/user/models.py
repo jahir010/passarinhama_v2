@@ -78,14 +78,6 @@ class Role(models.Model):
 # ─────────────────────────────────────────
 
 class FeaturePermission(models.Model):
-    """
-    Stores which CRUD actions a Role may perform on a Feature.
-
-    Usage:
-        perm = await FeaturePermission.get_or_none(role=role, feature=FEATURES.ARTICLE)
-        if perm and perm.can_create:
-            ...
-    """
     id         = fields.UUIDField(pk=True, default=uuid.uuid4)
     role       = fields.ForeignKeyField(
         "models.Role",
@@ -241,12 +233,6 @@ class User(models.Model):
     # Users without a role are denied unless an explicit user override allows it.
 
     async def has_permission(self, feature: FEATURES, action: str) -> bool:
-        """
-        Check whether this user's role grants the given action on a feature.
-
-        Example:
-            allowed = await user.has_permission(FEATURES.ARTICLE, "create")
-        """
         if self.is_superuser:
             return True
 

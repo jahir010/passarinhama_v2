@@ -497,10 +497,6 @@ async def create_permission(
 ):
     """
     Create or replace a role's feature permission (superuser only).
-
-    If a FeaturePermission for this (role, feature) pair already exists, it
-    is updated (upsert behaviour) so callers don't need to know the permission
-    ID up front.
     """
     role = await Role.get_or_none(id=body.role_id)
     if not role:

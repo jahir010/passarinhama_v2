@@ -175,8 +175,11 @@ async def list_articles(
     qs = Article.filter()
  
     
-    if status:
+    if status == ArticleStatus.DRAFT:
+        qs = qs.filter(status=status, author=current_user)
+    elif status:
         qs = qs.filter(status=status)
+    
     else:
         qs = qs.filter(status=ArticleStatus.PUBLISHED)
  

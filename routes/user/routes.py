@@ -306,6 +306,7 @@ async def _serialize_user(user: User) -> dict:
         #"role_id":              str(user.role_id) if user.role_id else None,
         "role":                 _serialize_role(user.role) if hasattr(user, "role") and user.role else None,
         "status":               user.status,
+        "is_superuser":         user.is_superuser,
         "is_payment_validated": user.is_payment_validated,
         "membership_year":      _membership_year(user),
         "is_email_verified":    user.is_email_verified,
@@ -784,6 +785,7 @@ async def create_user(
     role_id:           uuid.UUID | None = Form(None),
     status:            UserStatus = Form(UserStatus.PENDING),
     payment_validated: bool = Form(False),
+    is_superuser:      bool = Form(False),
     current_user: User = Depends(permission_required(FEATURES.USER, "create")),
 ):
     """Create a new member account."""
@@ -819,6 +821,7 @@ async def create_user(
         status=status,
         is_payment_validated=payment_validated,
         member_since=datetime.now(UTC.utc),
+        is_superuser=is_superuser,
     )
     await _ensure_user_permissions_seeded(user)
     await log_activity(

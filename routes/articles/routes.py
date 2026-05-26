@@ -172,6 +172,12 @@ async def list_articles(
     current_user: User | None = Depends(permission_required(FEATURES.ARTICLE, "view"))
 ):
     qs = Article.filter()
+
+    if not current_user.is_superuser:
+        qs = qs.filter(
+            role_permissions__role=current_user.role,
+            role_permissions__can_read=True,
+        )
  
     
     if status == ArticleStatus.DRAFT:
@@ -187,8 +193,8 @@ async def list_articles(
     if search:
         qs = qs.filter(Q(title__icontains=search) | Q(excerpt__icontains=search))
  
-    total    = await qs.count()
-    articles = await qs.offset((page - 1) * page_size).limit(page_size).prefetch_related("author", "category")
+    total    = await qs.distinct().count()
+    articles = await qs.distinct().offset((page - 1) * page_size).limit(page_size).prefetch_related("author", "category")
     return {"total": total, "page": page, "results": [await _article_serialize(a) for a in articles]}
  
  
@@ -262,10 +268,17 @@ async def list_my_articles(
         qs = Article.filter(author_id=author_id)
     else:
         qs = Article.filter(author=current_user)
+
+    if not current_user.is_superuser:
+        qs = qs.filter(
+            role_permissions__role=current_user.role,
+            role_permissions__can_read=True,
+        )
+
     if status:
         qs = qs.filter(status=status)
-    total    = await qs.count()
-    articles = await qs.offset((page - 1) * page_size).limit(page_size).prefetch_related("author", "category")
+    total    = await qs.distinct().count()
+    articles = await qs.distinct().offset((page - 1) * page_size).limit(page_size).prefetch_related("author", "category")
     return {"total": total, "page": page, "results": [await _article_serialize(a) for a in articles]}
  
  
@@ -274,6 +287,7 @@ async def get_article(article_id: uuid.UUID, current_user: User | None = Depends
     article = await Article.get_or_none(id=article_id).prefetch_related("author", "category")
     if not article:
         raise HTTPException(status_code=404, detail="Article not found.")
+    await check_article_access(article, current_user)
     if article.status == ArticleStatus.DRAFT:
         if current_user.id != article.author_id:
             raise HTTPException(status_code=403, detail="Draft articles are restricted.")
@@ -299,6 +313,7 @@ async def update_article(
     article = await Article.get_or_none(id=article_id)
     if not article:
         raise HTTPException(status_code=404, detail="Article not found.")
+    await check_article_access(article, current_user, need_write=True)
 
     # category update (if provided)
     if category_id:
@@ -401,6 +416,7 @@ async def publish_article(
     article = await Article.get_or_none(id=article_id)
     if not article:
         raise HTTPException(status_code=404, detail="Article not found.")
+    await check_article_access(article, current_user, need_write=True)
     if article.status == ArticleStatus.PENDING:
         article.status       = ArticleStatus.PUBLISHED
         article.published_at = datetime.now(UTC.utc)
@@ -418,6 +434,8 @@ async def publish_article(
 @router.delete("/articles/{article_id}", status_code=204, tags=["Articles"])
 async def delete_article(article_id: uuid.UUID, current_user: User = Depends(permission_required(FEATURES.ARTICLE, "delete"))):
     article = await Article.get_or_none(id=article_id)
+    if article:
+        await check_article_access(article, current_user, need_write=True)
     if article and article.structured_fields.get("file_urls", []):
         for url in article.structured_fields.get("file_urls", []):
             print(f"Deleting file from article deletion: {url}", flush=True)

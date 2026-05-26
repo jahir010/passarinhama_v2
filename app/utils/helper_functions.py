@@ -2,6 +2,7 @@ from applications.forums.models import Forum, ForumRolePermission
 from applications.user.models import User, ActivityActionType, ActivityLog
 from applications.documents.models import DocumentFolder, DocumentFolderPermission
 from applications.trainings.models import TrainingRolePermission, Training
+from applications.articles.models import Article, ArticleRolePermission
 from fastapi import HTTPException
 import uuid
 
@@ -30,6 +31,15 @@ async def check_training_access(training: Training, user: User, need_write: bool
     if user.is_superuser:
         return  # superusers bypass all permission checks
     perm = await TrainingRolePermission.get_or_none(training=training, role=user.role)
+    if perm is None or not perm.can_read:
+        raise HTTPException(status_code=403, detail="You do not have access to this content.")
+    if need_write and not perm.can_write:
+        raise HTTPException(status_code=403, detail="Your role does not allow changing this section.")
+    
+async def check_article_access(article: Article, user: User, need_write: bool = False) -> None:
+    if user.is_superuser:
+        return  # superusers bypass all permission checks
+    perm = await ArticleRolePermission.get_or_none(article=article, role=user.role)
     if perm is None or not perm.can_read:
         raise HTTPException(status_code=403, detail="You do not have access to this content.")
     if need_write and not perm.can_write:

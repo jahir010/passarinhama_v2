@@ -3,14 +3,15 @@ import ast
 from typing import List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status, Query, BackgroundTasks
 from tortoise.expressions import Q
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import uuid
 from datetime import datetime, timezone as UTC
 
-from app.auth import permission_required
+from app.auth import permission_required, superuser_required
 from app.token import get_current_user
 from app.utils.file_manager import delete_file, update_file, save_file
-from applications.articles.models import Article, ArticleCategory, ArticleStatus
+from app.utils.helper_functions import check_article_access
+from applications.articles.models import Article, ArticleCategory, ArticleStatus, ArticleRolePermission
 from applications.user.models import   User, Role, UserStatus, ActivityActionType, ActivityLog, FEATURES
 from applications.notifications.notifications import NotificationType, NotificationLog, NotificationPreference
 from routes.user.routes import log_activity
@@ -146,6 +147,18 @@ async def _article_serialize(article: Article) -> dict:
     }
 
 
+def _serialize_article_permission(perm: ArticleRolePermission) -> dict:
+    return {
+        "id": str(perm.id),
+        "article_id": str(perm.article.id),
+        "article_title": perm.article.title,
+        "role_id": str(perm.role.id),
+        "role_name": perm.role.name,
+        "can_read": perm.can_read,
+        "can_write": perm.can_write
+    }
+
+
 
 
  
@@ -223,6 +236,14 @@ async def create_article(
         status=status,
         author=current_user,
     )
+
+    roles = await Role.all()
+
+    for role in roles:
+        _, created = await ArticleRolePermission.get_or_create(
+            article=article,
+            role=role
+        )
 
     await log_activity(current_user, ActivityActionType.ARTICLE_PUBLISHED, "article", article.id, title)
 
@@ -461,3 +482,76 @@ async def delete_file_endpoint(file_url: List[str] = Form(...),
     for url in file_url:
         await delete_file(url)
     return {"deleted": file_url}
+
+
+
+# ─── Pydantic schema ───────────────────────────────────────────────────────────
+
+class BulkArticlePermissionRequest(BaseModel):
+    article_id: list[uuid.UUID]
+    role_id:     list[uuid.UUID]
+    can_read: bool
+    can_write: bool
+
+    @field_validator("article_id", "role_id")
+    @classmethod
+    def no_empty(cls, v):
+        if not v:
+            raise ValueError("List cannot be empty.")
+        return v
+
+
+
+@router.patch("/article/permissions/bulk", tags=["Articles"])
+async def set_article_permissions_bulk(
+    body:         BulkArticlePermissionRequest,
+    current_user: User = Depends(superuser_required)
+):
+    # 1. Validate all article IDs exist in ONE query
+    found_articles = await Article.filter(id__in=body.article_id).only("id")
+    found_ids    = {f.id for f in found_articles}
+
+    missing = set(body.article_id) - found_ids
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Articles not found or inactive: {[str(m) for m in missing]}",
+        )
+
+    # 2. Expand (article_id x role) combinations
+    records = [
+        ArticleRolePermission(
+            article_id = article_id,
+            role_id     = role_id,
+            can_read = body.can_read,
+            can_write = body.can_write,
+        )
+        for article_id in body.article_id
+        for role_id in body.role_id
+    ]
+
+    # 3. Single upsert — one round-trip
+    await ArticleRolePermission.bulk_create(
+        records,
+        update_fields=["can_read", "can_write"],
+        on_conflict=["article_id", "role_id"],
+    )
+
+    # 4. Return updated rows
+    result = await ArticleRolePermission.filter(
+        article_id__in=body.article_id
+    ).values("id", "article_id", "role_id", "can_read", "can_write")
+
+    return {"updated": len(records), "permissions": result}
+
+
+@router.get("/articles/{article_id}/permissions", tags=["Articles"])
+async def get_article_permissions(
+    article_id: uuid.UUID,
+    current_user: User = Depends(superuser_required)
+):
+    article = await Article.get_or_none(id=article_id)
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found.")
+    perms = await ArticleRolePermission.filter(article=article).all().prefetch_related("role", "article")
+    return [_serialize_article_permission(p) for p in perms]

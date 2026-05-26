@@ -869,6 +869,7 @@ async def get_me(current_user: User = Depends(login_required)):
 async def update_me(
     first_name: str | None = Form(None),
     last_name:  str | None = Form(None),
+    email:      EmailStr | None = Form(None),
     phone:      str | None = Form(None),
     mobile:     str | None = Form(None),
     avatar:     UploadFile | None = File(None),
@@ -889,6 +890,8 @@ async def update_me(
         current_user.first_name = first_name
     if last_name is not None:
         current_user.last_name = last_name
+    if email is not None:
+        current_user.email = email
     if phone is not None:
         current_user.phone = phone
     if mobile is not None:

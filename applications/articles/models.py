@@ -54,3 +54,17 @@ class Article(models.Model):
  
     def __str__(self) -> str:
         return self.title
+    
+
+
+
+class ArticleRolePermission(models.Model):
+    id       = fields.UUIDField(pk=True, default=uuid.uuid4)
+    article    = fields.ForeignKeyField("models.Article", related_name="role_permissions", on_delete=fields.CASCADE)
+    role     = fields.ForeignKeyField("models.Role", related_name="article_permissions", on_delete=fields.CASCADE)
+    can_read = fields.BooleanField(default=False)
+    can_write = fields.BooleanField(default=False)
+ 
+    class Meta:
+        table           = "article_role_permissions"
+        unique_together = [("article", "role")]

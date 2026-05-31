@@ -1,16 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
 from tortoise.expressions import F
 from pydantic import BaseModel, field_validator
 import uuid
 import os
 import mimetypes
+from datetime import datetime
+from html import escape
 
 from app.auth import role_required, superuser_required, permission_required
 from app.utils.helper_functions import log_activity, check_folder_access
 from app.utils.file_manager import save_file, delete_file   
 
-from applications.user.models import User, Role, ActivityActionType, FEATURES
+from applications.user.models import User, Role, ActivityActionType, FEATURES, UserStatus
 from applications.documents.models import DocumentFolder, DocumentFolderPermission, Document, FileType
+from applications.notifications.notifications import NotificationLog, NotificationPreference, NotificationType
+from app.utils.send_email import send_bulk_email
 
 
 router = APIRouter()
@@ -131,6 +135,154 @@ async def _get_folder_depth(folder_id: uuid.UUID) -> int:
         depth += 1
         current_id = folder.parent_id
     return depth
+
+
+def _format_french_datetime(value: datetime) -> str:
+    months = {
+        1: "Janvier",
+        2: "Février",
+        3: "Mars",
+        4: "Avril",
+        5: "Mai",
+        6: "Juin",
+        7: "Juillet",
+        8: "Août",
+        9: "Septembre",
+        10: "Octobre",
+        11: "Novembre",
+        12: "Décembre",
+    }
+    return f"{value.day} {months[value.month]} {value.year} {value:%H:%M}"
+
+
+async def _document_notification_recipients(folder_id: uuid.UUID) -> tuple[list[str], list[uuid.UUID]]:
+    opted_in_ids = await NotificationPreference.opted_in_user_ids(
+        NotificationType.NEW_DOCUMENT
+    )
+    if not opted_in_ids:
+        return [], []
+
+    users = await User.filter(
+        id__in=opted_in_ids,
+        status=UserStatus.ACTIVE,
+        is_payment_validated=True,
+        is_deleted=False,
+    ).prefetch_related("role")
+
+    emails: list[str] = []
+    user_ids: list[uuid.UUID] = []
+    for user in users:
+        if not await user.has_permission(FEATURES.DOCUMENT, "view"):
+            continue
+        if not user.is_superuser:
+            perm = await DocumentFolderPermission.get_or_none(
+                folder_id=folder_id,
+                role_id=user.role_id,
+                can_read=True,
+            )
+            if perm is None:
+                continue
+        emails.append(user.email)
+        user_ids.append(user.id)
+
+    return emails, user_ids
+
+
+async def _notify_new_document(
+    document_id: uuid.UUID,
+    folder_id: uuid.UUID,
+    folder_name: str,
+    file_name: str,
+    uploader_name: str,
+    uploaded_at: datetime,
+) -> None:
+    emails, user_ids = await _document_notification_recipients(folder_id)
+    if not emails:
+        return
+
+    document_url = f"https://archicopro.cloud/documents/{document_id}/download"
+    safe_folder_name = escape(folder_name)
+    safe_file_name = escape(file_name)
+    safe_uploader_name = escape(uploader_name)
+    safe_uploaded_at = escape(_format_french_datetime(uploaded_at))
+
+    html_body = f"""
+    <html>
+    <body style="margin:0; padding:20px; background:#ffffff; font-family:Arial,sans-serif;">
+      <table width="640" cellpadding="0" cellspacing="0" border="0"
+             style="border:3px solid #F5C518; margin:auto; background:#ffffff;">
+        <tr>
+          <td align="center" style="background-color:#F5C518; padding:12px 20px;">
+            <a href="https://archicopro.cloud"
+               style="color:#000000; font-size:18px; font-weight:bold;
+                      text-decoration:underline; display:block; margin-bottom:6px;">
+              Extranet de la Compagnie des Architectes de Copropriété
+            </a>
+            <span style="color:#000000; font-size:16px;">
+              Un immeuble , un architecte
+            </span>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:22px 34px 14px 34px;">
+            <p style="font-weight:bold; font-size:16px; margin:0 0 38px 0;">
+              Un nouveau fichier a été déposé
+            </p>
+            <table cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+              <tr>
+                <td style="padding:4px 0; color:#333; width:150px; font-size:16px;">Répertoire</td>
+                <td style="padding:4px 0; color:#333; font-size:16px;">{safe_folder_name}</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0; color:#333; width:150px; font-size:16px;">Fichier</td>
+                <td style="padding:4px 0; font-size:16px;">
+                  <a href="{document_url}" style="color:#003399; text-decoration:underline;">{safe_file_name}</a>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0; color:#333; width:150px; font-size:16px;">Auteur</td>
+                <td style="padding:4px 0; color:#333; font-size:16px;">{safe_uploader_name}</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0; color:#333; width:150px; font-size:16px;">Date</td>
+                <td style="padding:4px 0; color:#333; font-size:16px;">{safe_uploaded_at}</td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <tr>
+          <td align="center"
+              style="border-top:1px dashed #F5C518; padding:10px;
+                     font-size:12px; color:#555;">
+            Powered by <a href="https://archicopro.cloud" style="color:#003399;">Archicopro</a>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+    """
+
+    result = await send_bulk_email(
+        subject=f"Un fichier a été déposé {folder_name}/{file_name}",
+        recipients=emails,
+        html_message=html_body,
+        chunk_size=50,
+        chunk_delay=1.0,
+        retries=1,
+    )
+
+    if result["sent"] > 0:
+        await NotificationLog.bulk_create_for_users(
+            user_ids=user_ids,
+            notification_type=NotificationType.NEW_DOCUMENT,
+            target_type="document",
+            target_id=document_id,
+        )
+
+    print(
+        f"[notify] document={document_id} envoyé={result['sent']} échec={result['failed']}",
+        flush=True,
+    )
 
 
 
@@ -300,6 +452,7 @@ async def list_documents(
 
 @router.post("/documents/upload", tags=["Documents"], status_code=201)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     folder_id:    uuid.UUID   = Form(...),
     file:         UploadFile  = File(...),
     current_user: User        = Depends(permission_required(FEATURES.DOCUMENT, "create"))
@@ -341,6 +494,17 @@ async def upload_document(
     await log_activity(
         current_user, ActivityActionType.DOCUMENT_UPLOADED, "document", doc.id, file.filename
     )
+
+    background_tasks.add_task(
+        _notify_new_document,
+        doc.id,
+        folder.id,
+        folder.name,
+        doc.original_name,
+        current_user.full_name,
+        doc.created_at,
+    )
+
     return _serialize_document(doc, current_user)
 
 

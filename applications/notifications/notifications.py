@@ -10,6 +10,7 @@ class NotificationType(str, Enum):
     NEW_POST         = "new_post"
     NEW_EVENT        = "new_event"
     NEW_TRAINING     = "new_training"
+    NEW_DOCUMENT     = "new_document"
     POST_REPLY       = "post_reply"
     POST_REJECTED    = "post_rejected"
     ACCOUNT_APPROVED = "account_approved"
@@ -126,7 +127,6 @@ class NotificationLog(models.Model):
             )
             for uid in user_ids
         ])
-
 
 
 

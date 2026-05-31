@@ -362,31 +362,104 @@ async def _notify_user_payment_validated(user: User):
         print(f"[notify] Failed to send payment notification: {e}", flush=True)
 
 
-async def _notify_new_member(user: User, password: str):
+# async def _notify_new_member(user: User, password: str):
+#     try:
+#         await send_email(
+#             subject="Your Account Has Been Created",
+#             to=user.email,
+#             html_message=f"""
+#             <html><body>
+#             <p>Hi {user.first_name},</p>
+#             <p>Your account has been created by an administrator.</p>
+#             <p><strong>Email:</strong> {user.email}<br>
+#                <strong>Temporary Password:</strong> {password}</p>
+#             <p>Please change your password after first login.</p>
+#             <div style="text-align:center; margin:20px 0;">
+#                 <a href="https://example.com/login"
+#                    style="background:#4CAF50;color:#fff;padding:12px 20px;
+#                           text-decoration:none;border-radius:5px;">
+#                     Login to Your Account
+#                 </a>
+#             </div>
+#             </body></html>
+#             """,
+#         )
+#     except Exception as e:
+#         print(f"[notify] Failed to send new member notification: {e}", flush=True)
+
+
+async def _notify_new_member(user: "User", password: str) -> None:
+    html_body = f"""
+    <html>
+    <body style="margin:0; padding:20px; background:#f5f5f5; font-family:Arial,sans-serif;">
+      <table width="600" cellpadding="0" cellspacing="0" border="0"
+             style="border:2px solid #F5C518; margin:auto;">
+        <!-- EN-TÊTE -->
+        <tr>
+          <td align="center" style="background-color:#F5C518; padding:14px 20px;">
+            <a href="https://archicopro.cloud"
+               style="color:#000000; font-size:16px; font-weight:bold;
+                      text-decoration:underline; display:block; margin-bottom:4px;">
+              Archicopro
+            </a>
+            <span style="color:#000000; font-size:13px;">
+              Un bâtiment, un architecte
+            </span>
+          </td>
+        </tr>
+        <!-- CORPS -->
+        <tr>
+          <td style="padding:30px 40px;">
+            <p style="font-weight:bold; font-size:15px; margin:0 0 16px 0;">
+              Votre compte a été créé
+            </p>
+            <p style="font-size:14px; color:#333; margin:0 0 16px 0;">
+              Bonjour {user.first_name},<br><br>
+              Un administrateur vient de créer votre compte sur la plateforme
+              <strong>Archicopro</strong>.
+              Voici vos identifiants de connexion :
+            </p>
+            <table cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+              <tr>
+                <td style="padding:4px 0; color:#333; width:180px; font-size:14px; vertical-align:top;">Nom d'utilisateur</td>
+                <td style="padding:4px 0; color:#333; font-size:14px;">{user.email}</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0; color:#333; width:180px; font-size:14px; vertical-align:top;">Mot de passe temporaire</td>
+                <td style="padding:4px 0; color:#333; font-size:14px;">{password}</td>
+              </tr>
+            </table>
+            <p style="font-size:14px; color:#333; margin:16px 0 24px 0;">
+              Veuillez modifier votre mot de passe lors de votre première connexion.
+            </p>
+            <a href="https://archicopro.cloud/login"
+               style="background-color:#F5C518; color:#000000; padding:10px 22px;
+                      text-decoration:none; border-radius:4px; font-size:14px;
+                      font-weight:bold; display:inline-block;">
+              Se connecter
+            </a>
+          </td>
+        </tr>
+        <!-- PIED DE PAGE -->
+        <tr>
+          <td align="center"
+              style="border-top:1px dashed #F5C518; padding:10px;
+                     font-size:11px; color:#555;">
+            Propulsé par <a href="https://archicopro.cloud" style="color:#F5C518;">Archicopro</a>
+          </td>
+        </tr>
+      </table>
+    </body>
+    </html>
+    """
     try:
         await send_email(
-            subject="Your Account Has Been Created",
+            subject="Votre compte a été créé",
             to=user.email,
-            html_message=f"""
-            <html><body>
-            <p>Hi {user.first_name},</p>
-            <p>Your account has been created by an administrator.</p>
-            <p><strong>Email:</strong> {user.email}<br>
-               <strong>Temporary Password:</strong> {password}</p>
-            <p>Please change your password after first login.</p>
-            <div style="text-align:center; margin:20px 0;">
-                <a href="https://example.com/login"
-                   style="background:#4CAF50;color:#fff;padding:12px 20px;
-                          text-decoration:none;border-radius:5px;">
-                    Login to Your Account
-                </a>
-            </div>
-            </body></html>
-            """,
+            html_message=html_body,
         )
     except Exception as e:
-        print(f"[notify] Failed to send new member notification: {e}", flush=True)
-
+        print(f"[notify] Échec de l'envoi de l'e-mail de création de compte : {e}", flush=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Routes — Roles

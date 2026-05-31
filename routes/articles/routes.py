@@ -53,62 +53,168 @@ class ArticleOut(BaseModel):
 
 
 
-async def _notify_new_article(article_id: uuid.UUID, article_title: str) -> None:
+# async def _notify_new_article(article_id: uuid.UUID, article_title: str) -> None:
 
+#     opted_in_ids = await NotificationPreference.opted_in_user_ids(
+#         NotificationType.NEW_ARTICLE
+#     )
+#     if not opted_in_ids:
+#         return
+ 
+#     # 2. Filter to only eligible users and fetch their emails
+#     users = await User.filter(
+#         id__in=opted_in_ids,
+#         status=UserStatus.ACTIVE,
+#         is_payment_validated=True,
+#         is_deleted=False,
+#     ).values("id", "email", "first_name")
+ 
+#     if not users:
+#         return
+ 
+#     emails     = [u["email"] for u in users]
+#     user_ids   = [u["id"]    for u in users]
+ 
+#     # 3. Build a clean HTML email — never interpolate raw model objects
+#     html_body = f"""
+#     <html>
+#       <body style="font-family: sans-serif; color: #333;">
+#         <h2>New Article Published</h2>
+#         <p>A new article is now available on the platform:</p>
+#         <p><strong>{article_title}</strong></p>
+#         <p>
+#           <a href="https://archicopro.cloud/articles/{article_id}"
+#              style="background:#4F46E5;color:#fff;padding:10px 20px;
+#                     border-radius:6px;text-decoration:none;">
+#             Read Article
+#           </a>
+#         </p>
+#         <hr/>
+#         <small>
+#           You're receiving this because you subscribed to article notifications.
+#           <a href="https://archicopro.cloud/settings/notifications">Unsubscribe</a>
+#         </small>
+#       </body>
+#     </html>
+#     """
+ 
+#     # 4. Send in chunks — respects SMTP rate limits
+#     result = await send_bulk_email(
+#         subject=f"New Article: {article_title}",
+#         recipients=emails,
+#         html_message=html_body,
+#         chunk_size=50,
+#         chunk_delay=1.0,
+#         retries=1,
+#     )
+ 
+#     # 5. Write one log row per recipient in a single DB round-trip
+#     if result["sent"] > 0:
+#         await NotificationLog.bulk_create_for_users(
+#             user_ids=user_ids,
+#             notification_type=NotificationType.NEW_ARTICLE,
+#             target_type="article",
+#             target_id=article_id,
+#         )
+ 
+#     print(
+#         f"[notify] article={article_id} sent={result['sent']} failed={result['failed']}",
+#         flush=True,
+#     )
+
+
+
+async def _notify_new_article(article_id: uuid.UUID, article_title: str) -> None:
     opted_in_ids = await NotificationPreference.opted_in_user_ids(
         NotificationType.NEW_ARTICLE
     )
     if not opted_in_ids:
         return
- 
-    # 2. Filter to only eligible users and fetch their emails
+
     users = await User.filter(
         id__in=opted_in_ids,
         status=UserStatus.ACTIVE,
         is_payment_validated=True,
         is_deleted=False,
     ).values("id", "email", "first_name")
- 
+
     if not users:
         return
- 
-    emails     = [u["email"] for u in users]
-    user_ids   = [u["id"]    for u in users]
- 
-    # 3. Build a clean HTML email — never interpolate raw model objects
+
+    emails   = [u["email"] for u in users]
+    user_ids = [u["id"]    for u in users]
+
+    article_url = f"https://archicopro.cloud/articles/{article_id}"
+
     html_body = f"""
     <html>
-      <body style="font-family: sans-serif; color: #333;">
-        <h2>New Article Published</h2>
-        <p>A new article is now available on the platform:</p>
-        <p><strong>{article_title}</strong></p>
-        <p>
-          <a href="https://yourplatform.com/articles/{article_id}"
-             style="background:#4F46E5;color:#fff;padding:10px 20px;
-                    border-radius:6px;text-decoration:none;">
-            Read Article
-          </a>
-        </p>
-        <hr/>
-        <small>
-          You're receiving this because you subscribed to article notifications.
-          <a href="https://yourplatform.com/settings/notifications">Unsubscribe</a>
-        </small>
-      </body>
+    <body style="margin:0; padding:20px; background:#f5f5f5; font-family:Arial,sans-serif;">
+      <table width="600" cellpadding="0" cellspacing="0" border="0"
+             style="border:2px solid #F5C518; margin:auto;">
+
+        <!-- HEADER -->
+        <tr>
+          <td align="center" style="background-color:#F5C518; padding:14px 20px;">
+            <a href="https://archicopro.cloud"
+               style="color:#000000; font-size:16px; font-weight:bold;
+                      text-decoration:underline; display:block; margin-bottom:4px;">
+              Archicopro
+            </a>
+            <span style="color:#000000; font-size:13px;">
+              Un immeuble , un architecte
+            </span>
+          </td>
+        </tr>
+
+        <!-- BODY -->
+        <tr>
+          <td style="padding:30px 40px;">
+            <p style="font-weight:bold; font-size:15px; margin:0 0 16px 0;">
+              Un nouvel article a été publié
+            </p>
+            <table cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+              <tr>
+                <td style="padding:4px 0; color:#333; width:120px; font-size:14px; vertical-align:top;">Titre</td>
+                <td style="padding:4px 0; color:#333; font-size:14px;">{article_title}</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0; color:#333; width:120px; font-size:14px; vertical-align:top;">Lien</td>
+                <td style="padding:4px 0; font-size:14px;">
+                  <a href="{article_url}" style="color:#F5C518;">{article_url}</a>
+                </td>
+              </tr>
+            </table>
+            <p style="margin-top:24px; font-size:13px; color:#555;">
+              Vous recevez ce message car vous êtes abonné(e) aux notifications d'articles.<br>
+              <a href="https://archicopro.cloud/parametres/notifications"
+                 style="color:#F5C518;">Se désabonner</a>
+            </p>
+          </td>
+        </tr>
+
+        <!-- FOOTER -->
+        <tr>
+          <td align="center"
+              style="border-top:1px dashed #F5C518; padding:10px;
+                     font-size:11px; color:#555;">
+            Powered by <a href="https://archicopro.cloud" style="color:#F5C518;">Archicopro</a>
+          </td>
+        </tr>
+
+      </table>
+    </body>
     </html>
     """
- 
-    # 4. Send in chunks — respects SMTP rate limits
+
     result = await send_bulk_email(
-        subject=f"New Article: {article_title}",
+        subject=f"Nouvel article : {article_title}",
         recipients=emails,
         html_message=html_body,
         chunk_size=50,
         chunk_delay=1.0,
         retries=1,
     )
- 
-    # 5. Write one log row per recipient in a single DB round-trip
+
     if result["sent"] > 0:
         await NotificationLog.bulk_create_for_users(
             user_ids=user_ids,
@@ -116,9 +222,9 @@ async def _notify_new_article(article_id: uuid.UUID, article_title: str) -> None
             target_type="article",
             target_id=article_id,
         )
- 
+
     print(
-        f"[notify] article={article_id} sent={result['sent']} failed={result['failed']}",
+        f"[notify] article={article_id} envoyé={result['sent']} échec={result['failed']}",
         flush=True,
     )
 

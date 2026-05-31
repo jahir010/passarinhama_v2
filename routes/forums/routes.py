@@ -62,69 +62,169 @@ def _slugify(text: str) -> str:
 # FORUMS
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _notify_new_post(post_id: uuid.UUID, post_title: str) -> None:
-    """
-    Background task: send NEW_POST emails only to users who:
-      - are active, payment-validated, and not deleted
-      - have NOT opted out of NEW_POST notifications
+# async def _notify_new_post(post_id: uuid.UUID, post_title: str) -> None:
+#     """
+#     Background task: send NEW_POST emails only to users who:
+#       - are active, payment-validated, and not deleted
+#       - have NOT opted out of NEW_POST notifications
  
-    Sends in chunks of 50 to stay within SMTP rate limits, then writes
-    a single-batch audit log so the NotificationLog table stays accurate.
+#     Sends in chunks of 50 to stay within SMTP rate limits, then writes
+#     a single-batch audit log so the NotificationLog table stays accurate.
+#     """
+#     opted_in_ids = await NotificationPreference.opted_in_user_ids(
+#         NotificationType.NEW_POST
+#     )
+#     if not opted_in_ids:
+#         return
+ 
+#     # 2. Filter to only eligible users and fetch their emails
+#     users = await User.filter(
+#         id__in=opted_in_ids,
+#         status=UserStatus.ACTIVE,
+#         is_payment_validated=True,
+#         is_deleted=False,
+#     ).values("id", "email", "first_name")
+ 
+#     if not users:
+#         return
+ 
+#     emails     = [u["email"] for u in users]
+#     user_ids   = [u["id"]    for u in users]
+ 
+#     # 3. Build a clean HTML email — never interpolate raw model objects
+#     html_body = f"""
+#     <html>
+#       <body style="font-family: sans-serif; color: #333;">
+#         <h2>New Post Published</h2>
+#         <p>A new post is now available on the platform:</p>
+#         <p><strong>{post_title}</strong></p>
+#         <p>
+#           <a href="https://yourplatform.com/posts/{post_id}"
+#              style="background:#4F46E5;color:#fff;padding:10px 20px;
+#                     border-radius:6px;text-decoration:none;">
+#             Read Post
+#           </a>
+#         </p>
+#         <hr/>
+#         <small>
+#           You're receiving this because you subscribed to post notifications.
+#           <a href="https://yourplatform.com/settings/notifications">Unsubscribe</a>
+#         </small>
+#       </body>
+#     </html>
+#     """
+ 
+#     # 4. Send in chunks — respects SMTP rate limits
+#     result = await send_bulk_email(
+#         subject=f"New Post: {post_title}",
+#         recipients=emails,
+#         html_message=html_body,
+#         chunk_size=50,
+#         chunk_delay=1.0,
+#         retries=1,
+#     )
+ 
+#     # 5. Write one log row per recipient in a single DB round-trip
+#     if result["sent"] > 0:
+#         await NotificationLog.bulk_create_for_users(
+#             user_ids=user_ids,
+#             notification_type=NotificationType.NEW_POST,
+#             target_type="post",
+#             target_id=post_id,
+#         )
+ 
+#     print(
+#         f"[notify] post={post_id} sent={result['sent']} failed={result['failed']}",
+#         flush=True,
+#     )
+
+
+
+async def _notify_new_post(post_id: uuid.UUID, post_title: str, forum_name: str, author_name: str, post_date: str) -> None:
+    """
+    Tâche de fond : envoie les e-mails NEW_POST uniquement aux utilisateurs qui :
+      - sont actifs, avec paiement validé et non supprimés
+      - n'ont PAS désactivé les notifications NEW_POST
     """
     opted_in_ids = await NotificationPreference.opted_in_user_ids(
         NotificationType.NEW_POST
     )
+
+    print(f"post_id={post_id} post_title={post_title} forum_name={forum_name} author_name={author_name} post_date={post_date}")
     if not opted_in_ids:
         return
- 
-    # 2. Filter to only eligible users and fetch their emails
     users = await User.filter(
         id__in=opted_in_ids,
         status=UserStatus.ACTIVE,
         is_payment_validated=True,
         is_deleted=False,
     ).values("id", "email", "first_name")
- 
     if not users:
         return
- 
-    emails     = [u["email"] for u in users]
-    user_ids   = [u["id"]    for u in users]
- 
-    # 3. Build a clean HTML email — never interpolate raw model objects
+    emails   = [u["email"] for u in users]
+    user_ids = [u["id"]    for u in users]
+    post_url = f"https://archicopro.cloud/forum/{post_id}"
     html_body = f"""
     <html>
-      <body style="font-family: sans-serif; color: #333;">
-        <h2>New Post Published</h2>
-        <p>A new post is now available on the platform:</p>
-        <p><strong>{post_title}</strong></p>
-        <p>
-          <a href="https://yourplatform.com/posts/{post_id}"
-             style="background:#4F46E5;color:#fff;padding:10px 20px;
-                    border-radius:6px;text-decoration:none;">
-            Read Post
-          </a>
-        </p>
-        <hr/>
-        <small>
-          You're receiving this because you subscribed to post notifications.
-          <a href="https://yourplatform.com/settings/notifications">Unsubscribe</a>
-        </small>
-      </body>
+    <body style="margin:0; padding:20px; background:#f5f5f5; font-family:Arial,sans-serif;">
+      <table width="600" cellpadding="0" cellspacing="0" border="0"
+             style="border:2px solid #003399; margin:auto;">
+        <!-- HEADER -->
+        <tr>
+          <td align="center" style="background-color:#003399; padding:14px 20px;">
+            <a href="https://archicopro.cloud"
+               style="color:#ffffff; font-size:16px; font-weight:bold;
+                      text-decoration:underline; display:block; margin-bottom:4px;">
+              Extranet de la Compagnie des Architectes de Copropriété
+            </a>
+            <span style="color:#ffffff; font-size:13px;">
+              Un immeuble , un architecte
+            </span>
+          </td>
+        </tr>
+        <!-- BODY -->
+        <tr>
+          <td style="padding:30px 40px;">
+            <p style="font-weight:bold; font-size:15px; margin:0 0 16px 0; text-align:center;">
+              Une nouvelle contribution a été enregistrée dans le forum : {forum_name}
+            </p>
+            <p style="font-size:14px; color:#333; margin:0 0 8px 0; text-align:center;">
+              <strong>Sujet : {post_title}</strong>
+            </p>
+            <p style="font-size:14px; color:#333; margin:0 0 4px 0; text-align:center;">
+              Auteur : {author_name}
+            </p>
+            <p style="font-size:14px; color:#333; margin:0 0 24px 0; text-align:center;">
+              Date : {post_date}
+            </p>
+            <p style="text-align:center; margin:0;">
+              <a href="{post_url}"
+                 style="color:#6600cc; font-size:14px; text-decoration:underline;">
+                {post_title}
+              </a>
+            </p>
+          </td>
+        </tr>
+        <!-- FOOTER -->
+        <tr>
+          <td align="center"
+              style="border-top:1px dashed #003399; padding:10px;
+                     font-size:11px; color:#555;">
+            Powered by <a href="https://archicopro.cloud" style="color:#003399;">Archicopro</a>
+          </td>
+        </tr>
+      </table>
+    </body>
     </html>
     """
- 
-    # 4. Send in chunks — respects SMTP rate limits
     result = await send_bulk_email(
-        subject=f"New Post: {post_title}",
+        subject=f"Nouvelle contribution : {post_title}",
         recipients=emails,
         html_message=html_body,
         chunk_size=50,
         chunk_delay=1.0,
         retries=1,
     )
- 
-    # 5. Write one log row per recipient in a single DB round-trip
     if result["sent"] > 0:
         await NotificationLog.bulk_create_for_users(
             user_ids=user_ids,
@@ -132,9 +232,8 @@ async def _notify_new_post(post_id: uuid.UUID, post_title: str) -> None:
             target_type="post",
             target_id=post_id,
         )
- 
     print(
-        f"[notify] post={post_id} sent={result['sent']} failed={result['failed']}",
+        f"[notify] post={post_id} envoyé={result['sent']} échec={result['failed']}",
         flush=True,
     )
 
@@ -182,6 +281,7 @@ async def list_forums(current_user: User = Depends(permission_required(FEATURES.
                 "author_name":      forum.author_name,
                 "description":      forum.description,
                 "forum_type":       forum.forum_type,
+                "thumbnail_url":    forum.thumbnail_url,
                 "topic_count":      topic_count,
                 "post_count":       post_count,
                 "last_activity_at": last_topic.last_activity_at if last_topic else None,
@@ -205,6 +305,7 @@ async def list_forums(current_user: User = Depends(permission_required(FEATURES.
                 "slug":             forum.slug,
                 "author_name":      forum.author_name,
                 "description":      forum.description,
+                "thumbnail_url":    forum.thumbnail_url,
                 "forum_type":       forum.forum_type,
                 "topic_count":      topic_count,
                 "post_count":       post_count,
@@ -219,6 +320,7 @@ async def create_forum(
     name:        str,
     author_name: str | None = None,
     description: str | None = None,
+    thumbnail: UploadFile | None = File(None),
     forum_type:  str = "general",
     current_user: User = Depends(permission_required(FEATURES.FORUM, "create")),
 ):
@@ -229,8 +331,12 @@ async def create_forum(
         count = await Forum.filter(slug__startswith=slug).count()
         slug = f"{slug}-{count}"
 
+    thumbnail_url = None
+    if thumbnail:
+        thumbnail_url = await save_file(thumbnail, "forum_thumbnails")
+
     forum = await Forum.create(
-        name=name, slug=slug, description=description, forum_type=forum_type, author_name=author_name
+        name=name, slug=slug, description=description, forum_type=forum_type, author_name=author_name, thumbnail_url=thumbnail_url
     )
 
     roles = await Role.all()
@@ -263,6 +369,7 @@ async def update_forum(
     author_name: str | None = None,
     description: str | None = None,
     forum_type: str | None = None,
+    thumbnail: UploadFile | None = File(None),
     current_user: User = Depends(permission_required(FEATURES.FORUM, "edit")),
 ):
     forum = await Forum.get_or_none(id=forum_id)
@@ -282,6 +389,8 @@ async def update_forum(
         forum.forum_type = forum_type
     if author_name is not None:
         forum.author_name = author_name
+    if thumbnail is not None:
+        forum.thumbnail_url = await update_file(thumbnail, forum.thumbnail_url, "forum_thumbnails")
     await forum.save()
     await log_activity(current_user, ActivityActionType.FORUM_UPDATED, "forum", forum.id)
     return forum
@@ -294,6 +403,8 @@ async def delete_forum(
     forum = await Forum.get_or_none(id=forum_id)
     if not forum:
         raise HTTPException(status_code=404, detail="Forum not found.")
+    if forum.thumbnail_url:
+        await delete_file(forum.thumbnail_url)
     await log_activity(current_user, ActivityActionType.FORUM_DELETED, "forum", forum.id)
     await forum.delete()
     return {"status": "Forum deleted successfully."}
@@ -786,10 +897,18 @@ async def create_post(
             last_activity_at=datetime.now(UTC.utc),
         )
         topic_author = await topic.author
-        if topic_author.id != current_user.id:
+        if topic_author.id == current_user.id:
             try:
-                await send_email(
-                    topic_author, NotificationType.POST_REPLY, "post", post.id, background_tasks
+                # await send_email(
+                #     topic_author, NotificationType.POST_REPLY, "post", post.id, background_tasks
+                # )
+                background_tasks.add_task(
+                    _notify_new_post,
+                    post_id=str(post.id),
+                    post_title=topic.title,
+                    forum_name=forum.name,
+                    author_name=current_user.first_name,
+                    post_date=post.created_at.strftime("%Y-%m-%d %H:%M"),
                 )
             except Exception as e:
                 pass
@@ -884,7 +1003,14 @@ async def moderate_post(
         )
         post_author = await post.author
         try:
-            background_tasks.add_task(_notify_new_post, post.id, post.content)
+            background_tasks.add_task(
+                    _notify_new_post,
+                    post_id=str(post.id),
+                    post_title=topic.title,
+                    forum_name=(await topic.forum).name,
+                    author_name=post.author.first_name,
+                    post_date=post.created_at.strftime("%Y-%m-%d %H:%M"),
+                )
         except Exception as e:
             print(f"[notify] Failed to enqueue notification task: {e}", flush=True)
         log_action_type = ActivityActionType.POST_APPROVED

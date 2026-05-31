@@ -116,70 +116,177 @@ class EventUpdate(BaseModel):
 # Shared serialiser
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def _notify_new_event(event_id: uuid.UUID, event_title: str) -> None:
-    """
-    Background task: send NEW_EVENT emails only to users who:
-      - are active, payment-validated, and not deleted
-      - have NOT opted out of NEW_EVENT notifications
+# async def _notify_new_event(event_id: uuid.UUID, event_title: str) -> None:
+#     """
+#     Background task: send NEW_EVENT emails only to users who:
+#       - are active, payment-validated, and not deleted
+#       - have NOT opted out of NEW_EVENT notifications
  
-    Sends in chunks of 50 to stay within SMTP rate limits, then writes
-    a single-batch audit log so the NotificationLog table stays accurate.
-    """
-    # 1. Resolve opted-in user IDs (excludes explicit opt-outs)
+#     Sends in chunks of 50 to stay within SMTP rate limits, then writes
+#     a single-batch audit log so the NotificationLog table stays accurate.
+#     """
+#     # 1. Resolve opted-in user IDs (excludes explicit opt-outs)
+#     opted_in_ids = await NotificationPreference.opted_in_user_ids(
+#         NotificationType.NEW_EVENT
+#     )
+#     if not opted_in_ids:
+#         return
+ 
+#     # 2. Filter to only eligible users and fetch their emails
+#     users = await User.filter(
+#         id__in=opted_in_ids,
+#         status=UserStatus.ACTIVE,
+#         is_payment_validated=True,
+#         is_deleted=False,
+#     ).values("id", "email", "first_name")
+ 
+#     if not users:
+#         return
+ 
+#     emails     = [u["email"] for u in users]
+#     user_ids   = [u["id"]    for u in users]
+ 
+#     # 3. Build a clean HTML email — never interpolate raw model objects
+#     html_body = f"""
+#     <html>
+#       <body style="font-family: sans-serif; color: #333;">
+#         <h2>New Event Created</h2>
+#         <p>A new event is now available on the platform:</p>
+#         <p><strong>{event_title}</strong></p>
+#         <p>
+#           <a href="https://yourplatform.com/events/{event_id}"
+#              style="background:#4F46E5;color:#fff;padding:10px 20px;
+#                     border-radius:6px;text-decoration:none;">
+#             View Event
+#           </a>
+#         </p>
+#         <hr/>
+#         <small>
+#           You're receiving this because you subscribed to event notifications.
+#           <a href="https://yourplatform.com/settings/notifications">Unsubscribe</a>
+#         </small>
+#       </body>
+#     </html>
+#     """
+ 
+#     # 4. Send in chunks — respects SMTP rate limits
+#     result = await send_bulk_email(
+#         subject=f"New Event: {event_title}",
+#         recipients=emails,
+#         html_message=html_body,
+#         chunk_size=50,
+#         chunk_delay=1.0,
+#         retries=1,
+#     )
+ 
+#     # 5. Write one log row per recipient in a single DB round-trip
+#     if result["sent"] > 0:
+#         await NotificationLog.bulk_create_for_users(
+#             user_ids=user_ids,
+#             notification_type=NotificationType.NEW_EVENT,
+#             target_type="event",
+#             target_id=event_id,
+#         )
+ 
+#     print(
+#         f"[notify] event={event_id} sent={result['sent']} failed={result['failed']}",
+#         flush=True,
+#     )
+
+
+
+async def _notify_new_event(event_id: uuid.UUID, event_title: str) -> None:
+    
     opted_in_ids = await NotificationPreference.opted_in_user_ids(
         NotificationType.NEW_EVENT
     )
     if not opted_in_ids:
         return
- 
-    # 2. Filter to only eligible users and fetch their emails
+
     users = await User.filter(
         id__in=opted_in_ids,
         status=UserStatus.ACTIVE,
         is_payment_validated=True,
         is_deleted=False,
     ).values("id", "email", "first_name")
- 
+
     if not users:
         return
- 
-    emails     = [u["email"] for u in users]
-    user_ids   = [u["id"]    for u in users]
- 
-    # 3. Build a clean HTML email — never interpolate raw model objects
+
+    emails   = [u["email"] for u in users]
+    user_ids = [u["id"]    for u in users]
+
+    event_url = f"https://archicopro.cloud/agenda/{event_id}"
+
     html_body = f"""
     <html>
-      <body style="font-family: sans-serif; color: #333;">
-        <h2>New Event Created</h2>
-        <p>A new event is now available on the platform:</p>
-        <p><strong>{event_title}</strong></p>
-        <p>
-          <a href="https://yourplatform.com/events/{event_id}"
-             style="background:#4F46E5;color:#fff;padding:10px 20px;
-                    border-radius:6px;text-decoration:none;">
-            View Event
-          </a>
-        </p>
-        <hr/>
-        <small>
-          You're receiving this because you subscribed to event notifications.
-          <a href="https://yourplatform.com/settings/notifications">Unsubscribe</a>
-        </small>
-      </body>
+    <body style="margin:0; padding:20px; background:#f5f5f5; font-family:Arial,sans-serif;">
+      <table width="600" cellpadding="0" cellspacing="0" border="0"
+             style="border:2px solid #F5C518; margin:auto;">
+
+        <!-- HEADER -->
+        <tr>
+          <td align="center" style="background-color:#F5C518; padding:14px 20px;">
+            <a href="https://archicopro.cloud"
+               style="color:#000000; font-size:16px; font-weight:bold;
+                      text-decoration:underline; display:block; margin-bottom:4px;">
+              Archicopro
+            </a>
+            <span style="color:#000000; font-size:13px;">
+              Un immeuble , un architecte
+            </span>
+          </td>
+        </tr>
+
+        <!-- BODY -->
+        <tr>
+          <td style="padding:30px 40px;">
+            <p style="font-weight:bold; font-size:15px; margin:0 0 16px 0;">
+              Un nouvel événement a été créé
+            </p>
+            <table cellpadding="0" cellspacing="0" border="0" style="width:100%;">
+              <tr>
+                <td style="padding:4px 0; color:#333; width:120px; font-size:14px; vertical-align:top;">Événement</td>
+                <td style="padding:4px 0; color:#333; font-size:14px;">{event_title}</td>
+              </tr>
+              <tr>
+                <td style="padding:4px 0; color:#333; width:120px; font-size:14px; vertical-align:top;">Lien</td>
+                <td style="padding:4px 0; font-size:14px;">
+                  <a href="{event_url}" style="color:#F5C518;">{event_url}</a>
+                </td>
+              </tr>
+            </table>
+            <p style="margin-top:24px; font-size:13px; color:#555;">
+              Vous recevez ce message car vous êtes abonné(e) aux notifications d'événements.<br>
+              <a href="https://archicopro.cloud/profile"
+                 style="color:#F5C518;">Se désabonner</a>
+            </p>
+          </td>
+        </tr>
+
+        <!-- FOOTER -->
+        <tr>
+          <td align="center"
+              style="border-top:1px dashed #F5C518; padding:10px;
+                     font-size:11px; color:#555;">
+            Powered by <a href="https://archicopro.cloud" style="color:#F5C518;">Archicopro</a>
+          </td>
+        </tr>
+
+      </table>
+    </body>
     </html>
     """
- 
-    # 4. Send in chunks — respects SMTP rate limits
+
     result = await send_bulk_email(
-        subject=f"New Event: {event_title}",
+        subject=f"Nouvel événement : {event_title}",
         recipients=emails,
         html_message=html_body,
         chunk_size=50,
         chunk_delay=1.0,
         retries=1,
     )
- 
-    # 5. Write one log row per recipient in a single DB round-trip
+
     if result["sent"] > 0:
         await NotificationLog.bulk_create_for_users(
             user_ids=user_ids,
@@ -187,9 +294,9 @@ async def _notify_new_event(event_id: uuid.UUID, event_title: str) -> None:
             target_type="event",
             target_id=event_id,
         )
- 
+
     print(
-        f"[notify] event={event_id} sent={result['sent']} failed={result['failed']}",
+        f"[notify] événement={event_id} envoyé={result['sent']} échec={result['failed']}",
         flush=True,
     )
 

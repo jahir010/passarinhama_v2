@@ -30,6 +30,7 @@ class Forum(models.Model):
     slug        = fields.CharField(max_length=200, unique=True)
     author_name = fields.CharField(max_length=100)  # denormalised for display
     description = fields.TextField(null=True)
+    thumbnail_url = fields.CharField(max_length=500, null=True)
     forum_type  = fields.CharField(max_length=50, default="general")
     is_active   = fields.BooleanField(default=True)
     created_at  = fields.DatetimeField(auto_now_add=True)
